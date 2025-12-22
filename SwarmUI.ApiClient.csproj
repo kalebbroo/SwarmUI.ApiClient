@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <PackageId>SwarmUI.ApiClient</PackageId>
+    <AssemblyName>SwarmUI.ApiClient</AssemblyName>
+    <RootNamespace>SwarmUI.ApiClient</RootNamespace>
+    <Version>0.5.0-beta</Version>
+    <Authors>Hartsy</Authors>
+    <Company>Hartsy</Company>
+    <Description>C# client library for SwarmUI API. Provides strongly typed access to generation, model management, and server administration.</Description>
+    <PackageTags>swarmui;stable diffusion;image generation;ai;api client</PackageTags>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/HartsyAI/HartsyWeb</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/HartsyAI/HartsyWeb</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Tests\\**\\*.cs" />
+    <None Remove="Tests\\**\\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>
