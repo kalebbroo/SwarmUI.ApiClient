@@ -124,6 +124,41 @@ public class GenerationRequest
     /// <summary>Aspect ratio for BFL models (e.g., "1:1", "16:9").</summary>
     public string? AspectRatio { get; set; }
     #endregion
+
+    #region OpenAI API Parameters
+    // NOTE:
+    // The parameters below apply ONLY to OpenAI models (DALL-E 2, DALL-E 3, GPT-Image-1, GPT-Image-1.5)
+    // when accessed via SwarmUI using the API Backends extension.
+
+    /// <summary>OpenAI image quality level. 
+    /// GPT models: auto/high/medium/low. DALL-E 3: hd/standard. DALL-E 2: standard only.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_quality")]
+    public string? OpenAIQuality { get; set; }
+
+    /// <summary>OpenAI DALL-E 3 style. vivid = hyper-real/dramatic, natural = more realistic.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_style")]
+    public string? OpenAIStyle { get; set; }
+
+    /// <summary>OpenAI image size. Model-specific allowed values.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_size")]
+    public string? OpenAISize { get; set; }
+
+    /// <summary>OpenAI GPT model background transparency. auto/transparent/opaque.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_background")]
+    public string? OpenAIBackground { get; set; }
+
+    /// <summary>OpenAI GPT model content moderation level. auto/low.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_moderation")]
+    public string? OpenAIModeration { get; set; }
+
+    /// <summary>OpenAI GPT model output format. png/jpeg/webp.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_output_format")]
+    public string? OpenAIOutputFormat { get; set; }
+
+    /// <summary>OpenAI number of images to generate. 1-10, but DALL-E 3 only supports 1.</summary>
+    [Newtonsoft.Json.JsonProperty("openai_n")]
+    public int? OpenAIN { get; set; }
+    #endregion
 }
 
 /// <summary>Represents a LoRA (Low-Rank Adaptation) model to apply during generation.</summary>
