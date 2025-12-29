@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using SwarmUI.ApiClient.Endpoints.Admin;
 using SwarmUI.ApiClient.Endpoints.Backends;
 using SwarmUI.ApiClient.Endpoints.Generation;
+using SwarmUI.ApiClient.Endpoints.LLM;
 using SwarmUI.ApiClient.Endpoints.Models;
 using SwarmUI.ApiClient.Endpoints.Presets;
 using SwarmUI.ApiClient.Endpoints.User;
@@ -38,6 +39,13 @@ public interface ISwarmClient : IAsyncDisposable
     /// <summary>Access to administrative endpoints.</summary>
     /// <remarks>Provides user management, role management, server operations, and system management. Requires administrative permissions on the SwarmUI server.</remarks>
     IAdminEndpoint Admin { get; }
+
+    /// <summary>Access to LLM endpoints for text processing and enhancement.</summary>
+    /// <remarks>
+    /// NOTE: LLM endpoints are Hartsy-specific extensions and not part of standard SwarmUI.
+    /// Provides access to language model features like MagicPrompt for text enhancement.
+    /// </remarks>
+    ILLMEndpoint LLM { get; }
 
     /// <summary>Performs a health check on the SwarmUI server.</summary>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>

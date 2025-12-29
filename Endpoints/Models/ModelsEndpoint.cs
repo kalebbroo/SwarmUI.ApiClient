@@ -278,7 +278,7 @@ public class ModelsEndpoint : IModelsEndpoint
         await foreach (ModelOperationUpdate update in Internal.WebSocketClient.StreamMessagesAsync<ModelOperationUpdate>("DoModelDownloadWS", payload,
             ParseModelOperationMessage, cancellationToken))
         {
-            if (update != null)
+            if (update is not null)
             {
                 yield return update;
             }
@@ -326,7 +326,7 @@ public class ModelsEndpoint : IModelsEndpoint
 
     public ModelOperationUpdate ParseModelOperationMessage(JObject message)
     {
-        if (message == null)
+        if (message is null)
         {
             return new ModelOperationUpdate();
         }

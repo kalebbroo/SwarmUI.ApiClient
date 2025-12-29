@@ -57,3 +57,4 @@ dkms.conf
 /obj
 /Tests/obj
 /Tests/bin
+/.vs

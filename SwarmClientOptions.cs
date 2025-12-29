@@ -6,6 +6,9 @@ namespace SwarmUI.ApiClient;
 /// <remarks>This class defines all configurable parameters that control client behavior, including connection settings, timeouts, retry policies, and authentication.</remarks>
 public class SwarmClientOptions
 {
+    /// <summary>HTTP header name used for SwarmUI authentication.</summary>
+    public string AuthorizationHeaderName { get; set; } = "Authorization";
+
     /// <summary>Base URL of the SwarmUI server instance.</summary>
     /// <remarks>Example: "http://localhost:7801" or "https://hartsy.ai". This should NOT include the /API/ path - that will be appended automatically.</remarks>
     public string BaseUrl { get; set; } = "http://localhost:7801";

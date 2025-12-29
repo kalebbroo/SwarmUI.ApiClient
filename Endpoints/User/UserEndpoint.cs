@@ -90,11 +90,10 @@ public class UserEndpoint : IUserEndpoint
         {
             throw new ArgumentNullException(nameof(settings));
         }
-        if (settings.Count == 0)
+        if (settings.Count is 0)
         {
             throw new ArgumentException("Settings dictionary cannot be empty", nameof(settings));
         }
-
         Internal.Logger.LogDebug("Updating user settings with {Count} values", settings.Count);
         JObject payload = new()
         {
@@ -152,7 +151,7 @@ public class UserEndpoint : IUserEndpoint
         {
             throw new ArgumentException("Key type cannot be null or empty", nameof(keyType));
         }
-        if (key == null)
+        if (key is null)
         {
             throw new ArgumentNullException(nameof(key));
         }

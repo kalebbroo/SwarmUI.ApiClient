@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SwarmUI.ApiClient.Endpoints.Admin;
 using SwarmUI.ApiClient.Endpoints.Backends;
 using SwarmUI.ApiClient.Endpoints.Generation;
+using SwarmUI.ApiClient.Endpoints.LLM;
 using SwarmUI.ApiClient.Endpoints.Models;
 using SwarmUI.ApiClient.Endpoints.Presets;
 using SwarmUI.ApiClient.Endpoints.User;
@@ -66,6 +67,10 @@ public class SwarmClient : ISwarmClient
     /// <summary>Access to administrative endpoints for user management, roles, server operations, and system administration.</summary>
     public IAdminEndpoint Admin { get; }
 
+    /// <summary>Access to LLM endpoints for text processing and enhancement via language models.</summary>
+    /// <remarks>NOTE: LLM endpoints are Hartsy-specific extensions and not part of standard SwarmUI.</remarks>
+    public ILLMEndpoint LLM { get; }
+
     /// <summary>Creates a new SwarmClient for standalone usage where the client owns its HttpClient instance.</summary>
     /// <param name="options">Configuration options for the client. Must not be null.</param>
     /// <param name="logger">Optional logger for client operations. Uses NullLogger if null.</param>
@@ -111,6 +116,7 @@ public class SwarmClient : ISwarmClient
         Presets = new PresetsEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
         User = new UserEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
         Admin = new AdminEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
+        LLM = new LLMEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
         Internal.Logger.LogInformation("SwarmClient initialized for {BaseUrl}", options.BaseUrl);
     }
 
@@ -137,7 +143,9 @@ public class SwarmClient : ISwarmClient
         ArgumentNullException.ThrowIfNull(options);
         if (!string.IsNullOrEmpty(options.Authorization))
         {
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(options.Authorization);
+            string headerName = string.IsNullOrWhiteSpace(options.AuthorizationHeaderName) ? "Authorization" : options.AuthorizationHeaderName;
+            httpClient.DefaultRequestHeaders.Remove(headerName);
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(headerName, options.Authorization);
         }
     }
 
