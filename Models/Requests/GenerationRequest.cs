@@ -249,6 +249,28 @@ public class GenerationRequest
     [Newtonsoft.Json.JsonProperty("google_imagen_negative_prompt")]
     public string? GoogleImagenNegativePrompt { get; set; }
     #endregion
+
+    #region Grok API Parameters
+    // NOTE:
+    // The parameters below apply ONLY to Grok models (grok-2-image)
+    // when accessed via SwarmUI using the API Backends extension.
+
+    /// <summary>Grok number of images to generate (1-10). Defaults to 1.</summary>
+    [Newtonsoft.Json.JsonProperty("grok_n")]
+    public int? GrokN { get; set; }
+
+    /// <summary>Grok image quality level: low, medium, high. Controls generation speed and quality balance.</summary>
+    [Newtonsoft.Json.JsonProperty("grok_quality")]
+    public string? GrokQuality { get; set; }
+
+    /// <summary>Grok response format: url (direct image URL) or b64_json (base64 encoded JSON).</summary>
+    [Newtonsoft.Json.JsonProperty("grok_response_format")]
+    public string? GrokResponseFormat { get; set; }
+
+    /// <summary>Grok user identifier for request tracking and analytics. Optional.</summary>
+    [Newtonsoft.Json.JsonProperty("grok_user")]
+    public string? GrokUser { get; set; }
+    #endregion
 }
 
 /// <summary>Represents a LoRA (Low-Rank Adaptation) model to apply during generation.</summary>
