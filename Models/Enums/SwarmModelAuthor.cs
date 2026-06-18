@@ -39,5 +39,7 @@ public enum SwarmModelAuthor
     /// <summary>StepFun — ACE-Step audio model.</summary>
     StepFun,
     /// <summary>Genmo — Mochi 1.</summary>
-    Genmo
+    Genmo,
+    /// <summary>Ideogram — Ideogram 4 (open-weight).</summary>
+    Ideogram
 }

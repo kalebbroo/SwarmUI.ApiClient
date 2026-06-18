@@ -77,7 +77,9 @@ public enum SwarmModelFamily
     /// <summary>ACE-Step 1.5 audio (music generation). Author: StepFun.</summary>
     AceStep,
     /// <summary>Mochi 1 video preview. Author: Genmo.</summary>
-    Mochi1
+    Mochi1,
+    /// <summary>Ideogram 4. Author: Ideogram.</summary>
+    Ideogram
 }
 
 /// <summary>Extension methods that derive metadata for a <see cref="SwarmModelFamily"/>.</summary>
@@ -106,6 +108,7 @@ public static class SwarmModelFamilyExtensions
         SwarmModelFamily.OmniGen2 => SwarmModelAuthor.VectorSpaceLab,
         SwarmModelFamily.AceStep => SwarmModelAuthor.StepFun,
         SwarmModelFamily.Mochi1 => SwarmModelAuthor.Genmo,
+        SwarmModelFamily.Ideogram => SwarmModelAuthor.Ideogram,
         _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Unknown SwarmModelFamily value — add an author mapping in SwarmModelFamilyExtensions.GetAuthor")
     };
 }

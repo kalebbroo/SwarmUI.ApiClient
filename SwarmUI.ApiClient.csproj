@@ -8,7 +8,7 @@
     <PackageId>SwarmUI.ApiClient</PackageId>
     <AssemblyName>SwarmUI.ApiClient</AssemblyName>
     <RootNamespace>SwarmUI.ApiClient</RootNamespace>
-    <Version>0.6.0-beta</Version>
+    <Version>0.6.1-beta</Version>
     <Authors>Hartsy</Authors>
     <Company>Hartsy</Company>
     <Description>C# client library for SwarmUI API. Provides strongly typed access to generation, model management, and server administration.</Description>
