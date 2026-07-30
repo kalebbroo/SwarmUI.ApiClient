@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using SwarmUI.ApiClient;
-using SwarmUI.ApiClient.Models.Responses;
+using SwarmUI.ApiClient.Contracts.Responses;
 using Xunit;
 
 namespace SwarmUI.ApiClient.Tests.IntegrationTests

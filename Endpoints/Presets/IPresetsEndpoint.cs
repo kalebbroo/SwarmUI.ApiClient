@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using SwarmUI.ApiClient.Models.Requests;
+using SwarmUI.ApiClient.Contracts.Requests;
 
 namespace SwarmUI.ApiClient.Endpoints.Presets;
 

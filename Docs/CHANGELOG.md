@@ -1,5 +1,35 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.7.0-beta
+
+Restructures the library so endpoints backed by a SwarmUI server extension are structurally separate
+from stock SwarmUI, in preparation for the AudioLab and LLMAssistant extension endpoints.
+
+- Added `Extensions/`, holding one folder per SwarmUI extension with its endpoint interface,
+  implementation, and owned contracts. `Endpoints/` is now stock SwarmUI only.
+- Added `ISwarmClient.Extensions`, `ISwarmExtensions`, `ISwarmExtensionEndpoint`, and
+  `SwarmExtensionInfo`. `ISwarmExtensions.All` reports every supported extension for runtime
+  capability reporting.
+- Added `Extensions/README.md` as the supported extension registry and the checklist for adding one.
+- Added unit tests for the MagicPrompt endpoint and extension metadata under `Tests/Extensions/`.
+
+### Breaking changes
+
+- `ISwarmClient.LLM` is removed. Use `ISwarmClient.Extensions.MagicPrompt`.
+- `ILLMEndpoint` / `LLMEndpoint` are renamed to `IMagicPromptEndpoint` / `MagicPromptEndpoint` and
+  moved from `SwarmUI.ApiClient.Endpoints.LLM` to `SwarmUI.ApiClient.Extensions.MagicPrompt`. The
+  capability-based `LLM` grouping was replaced with per-extension grouping because MagicPrompt,
+  LLMAssistant, and AudioLab are separate extensions.
+- `MagicPromptRequest`, `MessageContent`, and `MagicPromptResponse` move to
+  `SwarmUI.ApiClient.Extensions.MagicPrompt.Contracts`.
+- The `Models/` folder is renamed to `Contracts/`; `SwarmUI.ApiClient.Models.*` namespaces become
+  `SwarmUI.ApiClient.Contracts.*`. `Models` was ambiguous against SwarmUI's own use of "model" for
+  checkpoints and LoRAs.
+- `ServiceCollectionExtensions` is renamed to `SwarmClientServiceCollectionExtensions` and moved from
+  `SwarmUI.ApiClient.Extensions` to the `Microsoft.Extensions.DependencyInjection` namespace, matching
+  the framework convention. Hosts that referenced `using SwarmUI.ApiClient.Extensions;` solely for
+  `AddSwarmClient` can drop that directive.
+
 ## 0.5.0-beta (release)
 - Released `SwarmUI.ApiClient` beta v0.5.0 to NuGet.org.
 - Finalized admin endpoint implementations: user management, system stats, and backend monitoring.

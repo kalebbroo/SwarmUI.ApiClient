@@ -2,17 +2,22 @@
 
 **Professional C# client library for SwarmUI API**
 
-🚧 **v0.5.0-beta** 🚧
+🚧 **v0.7.0-beta** 🚧
 
 SwarmUI.ApiClient is a strongly-typed C# wrapper around the SwarmUI API, providing first-class support for text-to-image generation, model management, presets, user data, backends, and admin operations. The core implementation is in place and covered by unit tests; the API surface may still evolve before a 1.0.0 stable release.
 
 ## Project Structure
+
+Stock SwarmUI and SwarmUI *extensions* are deliberately kept in separate trees. Anything under
+`Endpoints/` works against a vanilla SwarmUI server; anything under `Extensions/` requires a
+specific extension to be installed on that server.
 
 ```
 SwarmUI.ApiClient/
 ├── SwarmClient.cs                 # Main client class
 ├── ISwarmClient.cs                # Main client interface
 ├── SwarmClientOptions.cs          # Configuration options
+├── SwarmClientServiceCollectionExtensions.cs   # AddSwarmClient DI registration
 │
 ├── Sessions/                      # Session management
 │   ├── ISessionManager.cs
@@ -26,7 +31,7 @@ SwarmUI.ApiClient/
 │   ├── ISwarmWebSocketClient.cs
 │   └── SwarmWebSocketClient.cs
 │
-├── Endpoints/                     # API endpoint groups
+├── Endpoints/                     # Stock SwarmUI API endpoint groups
 │   ├── Generation/                # Text-to-image generation
 │   ├── Models/                    # Model management
 │   ├── Backends/                  # Backend servers
@@ -34,10 +39,11 @@ SwarmUI.ApiClient/
 │   ├── User/                      # User settings
 │   └── Admin/                     # Admin operations
 │
-├── Models/                        # Data models
-│   ├── Requests/                  # Request models
-│   ├── Responses/                 # Response models
-│   └── Common/                    # Shared models
+├── Contracts/                     # Wire contracts for stock SwarmUI endpoints
+│   ├── Requests/                  # Request contracts
+│   ├── Responses/                 # Response contracts
+│   ├── Common/                    # Shared contracts
+│   └── Enums/                     # Contract enums
 │
 ├── Exceptions/                    # Custom exceptions
 │   ├── SwarmException.cs
@@ -45,9 +51,38 @@ SwarmUI.ApiClient/
 │   ├── SwarmAuthenticationException.cs
 │   └── SwarmWebSocketException.cs
 │
-└── Extensions/                    # DI extensions
-    └── ServiceCollectionExtensions.cs
+└── Extensions/                    # SwarmUI server extensions, one folder per extension
+    ├── README.md                  # Supported extension registry
+    ├── ISwarmExtensions.cs        # Exposed as ISwarmClient.Extensions
+    ├── ISwarmExtensionEndpoint.cs # Implemented by every extension endpoint group
+    ├── SwarmExtensionInfo.cs      # Extension metadata for runtime discovery
+    └── MagicPrompt/               # MagicPrompt extension
+        ├── IMagicPromptEndpoint.cs
+        ├── MagicPromptEndpoint.cs
+        └── Contracts/             # Contracts owned by this extension
 ```
+
+### Extension endpoints
+
+Extension-backed endpoints are namespaced and accessed separately from the stock API, so a dependency
+on a server-side extension is visible in the folder tree, the namespace, and the call site:
+
+```csharp
+// Stock SwarmUI - works against any server
+ModelListResponse models = await client.Models.ListModelsAsync("Stable-Diffusion");
+
+// Extension - requires SwarmUI-MagicPromptExtension installed on the server
+MagicPromptResponse enhanced = await client.Extensions.MagicPrompt.EnhancePromptAsync(request);
+
+// Which extensions this client supports
+foreach (SwarmExtensionInfo info in client.Extensions.All)
+{
+    Console.WriteLine($"{info.DisplayName} -> {info.RepositoryUrl}");
+}
+```
+
+See [`Extensions/README.md`](./Extensions/README.md) for the supported extension registry and the
+steps for adding a new one.
 
 ## Changelog
 
@@ -100,7 +135,8 @@ await foreach (GenerationUpdate update in client.Generation.StreamGenerationAsyn
 
 ### Dependency Injection Usage
 ```csharp
-// Program.cs
+// Program.cs - AddSwarmClient lives in the Microsoft.Extensions.DependencyInjection
+// namespace, so no extra using directive is needed in a typical host.
 builder.Services.AddSwarmClient(options =>
 {
     options.BaseUrl = "https://hartsy.ai";

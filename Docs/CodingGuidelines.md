@@ -48,8 +48,9 @@ This document describes how `SwarmUI.ApiClient` is actually structured and imple
 
 - **`ISwarmClient`**
   - Primary entry point for consumers.
-  - Exposes endpoint properties:
+  - Exposes stock SwarmUI endpoint properties:
     - `Generation`, `Models`, `Backends`, `Presets`, `User`, `Admin`.
+  - Exposes `Extensions` for every endpoint group that depends on a SwarmUI server extension.
   - Implements `IAsyncDisposable` via `SwarmClient.DisposeAsync`.
   - Provides `GetHealthAsync` for a basic server health check (currently implemented via session creation and timing).
 
@@ -61,12 +62,36 @@ This document describes how `SwarmUI.ApiClient` is actually structured and imple
   - HTTP-only operations delegate to `ISwarmHttpClient`.
   - Streaming operations delegate to `ISwarmWebSocketClient`.
 
-- **Models / DTOs**
-  - Request/response types live under:
-    - `SwarmUI.ApiClient.Models.Requests`
-    - `SwarmUI.ApiClient.Models.Responses`
-    - `SwarmUI.ApiClient.Models.Common`
-  - `GenerationRequest` (plus `LoraModel`) is the primary high-level model for generation requests and is mapped into the WebSocket payload by `GenerationEndpoint.CreateGenerationPayload`.
+- **Contracts / DTOs**
+  - Request/response types for stock SwarmUI endpoints live under:
+    - `SwarmUI.ApiClient.Contracts.Requests`
+    - `SwarmUI.ApiClient.Contracts.Responses`
+    - `SwarmUI.ApiClient.Contracts.Common`
+    - `SwarmUI.ApiClient.Contracts.Enums`
+  - The folder is named `Contracts` rather than `Models` because "model" already means a checkpoint,
+    LoRA, or VAE in SwarmUI vocabulary, and `Endpoints/Models` is the endpoint group for that domain.
+  - Extension contracts never live here. They belong to the extension that owns them, under
+    `Extensions/<ExtensionName>/Contracts`.
+  - `GenerationRequest` (plus `LoraModel`) is the primary high-level contract for generation requests and is mapped into the WebSocket payload by `GenerationEndpoint.CreateGenerationPayload`.
+
+## Extension endpoints
+
+SwarmUI extensions add API endpoints that do not exist on a stock server. The layout keeps that
+distinction structural rather than relying on comments:
+
+- `Endpoints/` contains **stock SwarmUI only**. Never add an extension endpoint here.
+- `Extensions/<ExtensionName>/` contains one folder per SwarmUI extension, holding its endpoint
+  interface, implementation, and a `Contracts/` subfolder for the types it owns.
+- Each extension endpoint interface inherits `ISwarmExtensionEndpoint` and each implementation
+  exposes a `public static readonly SwarmExtensionInfo ExtensionInfo` describing the extension name,
+  repository, and the endpoint names it adds.
+- Extension endpoints are reached through `ISwarmClient.Extensions` (for example
+  `client.Extensions.MagicPrompt`), never as a direct property on `ISwarmClient`, so the call site
+  itself signals the server-side dependency.
+- `ISwarmExtensions.All` reports `SwarmExtensionInfo` for every supported extension so hosts can log
+  or gate extension dependent features.
+- Register a new extension in `ISwarmExtensions`, `SwarmExtensions`, and the table in
+  `Extensions/README.md`.
 
 ## HTTP layer (SwarmHttpClient)
 
@@ -142,7 +167,9 @@ This document describes how `SwarmUI.ApiClient` is actually structured and imple
 
 ## Dependency injection usage
 
-- `SwarmUI.ApiClient.Extensions.ServiceCollectionExtensions.AddSwarmClient` configures SwarmUI.ApiClient for ASP.NET Core DI:
+- `AddSwarmClient` (in `SwarmClientServiceCollectionExtensions`) configures SwarmUI.ApiClient for ASP.NET Core DI:
+  - Declared in the `Microsoft.Extensions.DependencyInjection` namespace, following the convention
+    used by the framework's own registration helpers, so it resolves without an extra using directive.
   - Registers `SwarmClientOptions` with the options pattern and exposes it as a singleton.
   - Registers a typed `HttpClient` for `ISwarmClient` / `SwarmClient` via `AddHttpClient`, setting:
     - `BaseAddress` and `Timeout` from `SwarmClientOptions`.
@@ -159,6 +186,8 @@ This document describes how `SwarmUI.ApiClient` is actually structured and imple
     - Payload shaping and parsing for `GenerationEndpoint` and `ModelsEndpoint`.
     - Streaming behavior with fake WebSocket clients.
     - HTTP payload shaping with recording HTTP clients.
+    - Extension endpoint payloads and `SwarmExtensionInfo` metadata, mirroring the source layout
+      under `Tests/Extensions/<ExtensionName>`.
 - **HartsyWeb usage**
   - `GenerateAPIController` uses `ISwarmClient.Generation` and related endpoints to:
     - Stream image generation to web clients via SSE.

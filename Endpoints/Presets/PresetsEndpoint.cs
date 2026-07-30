@@ -4,8 +4,8 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json.Linq;
+using SwarmUI.ApiClient.Contracts.Requests;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Models.Requests;
 using SwarmUI.ApiClient.Sessions;
 
 namespace SwarmUI.ApiClient.Endpoints.Presets;

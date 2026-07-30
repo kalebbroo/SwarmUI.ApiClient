@@ -1,19 +1,20 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using SwarmUI.ApiClient.Contracts.Responses;
 using SwarmUI.ApiClient.Endpoints.Admin;
 using SwarmUI.ApiClient.Endpoints.Backends;
 using SwarmUI.ApiClient.Endpoints.Generation;
-using SwarmUI.ApiClient.Endpoints.LLM;
 using SwarmUI.ApiClient.Endpoints.Models;
 using SwarmUI.ApiClient.Endpoints.Presets;
 using SwarmUI.ApiClient.Endpoints.User;
-using SwarmUI.ApiClient.Models.Responses;
+using SwarmUI.ApiClient.Extensions;
 
 namespace SwarmUI.ApiClient;
 
 /// <summary>Primary interface for interacting with the SwarmUI API and accessing organized endpoint groups.</summary>
-/// <remarks>Implements IAsyncDisposable to clean up HTTP and WebSocket resources. For implementation details, see the library documentation.</remarks>
+/// <remarks>Every endpoint group exposed directly on this interface is part of stock SwarmUI. Endpoints that depend on a SwarmUI server extension live under <see cref="Extensions"/> instead.
+/// Implements IAsyncDisposable to clean up HTTP and WebSocket resources. For implementation details, see the library documentation.</remarks>
 public interface ISwarmClient : IAsyncDisposable
 {
     /// <summary>Access to text-to-image generation endpoints.</summary>
@@ -40,10 +41,9 @@ public interface ISwarmClient : IAsyncDisposable
     /// <remarks>Provides user management, role management, server operations, and system management. Requires administrative permissions on the SwarmUI server.</remarks>
     IAdminEndpoint Admin { get; }
 
-    /// <summary>Access to LLM endpoints for text processing and enhancement.</summary>
-    /// <remarks>NOTE: LLM endpoints are Hartsy-specific extensions and not part of standard SwarmUI.
-    /// Provides access to language model features like MagicPrompt for text enhancement.</remarks>
-    ILLMEndpoint LLM { get; }
+    /// <summary>Access to endpoints added by SwarmUI server extensions, grouped one property per extension.</summary>
+    /// <remarks>Nothing under this property is part of stock SwarmUI. Each extension must be installed and configured on the target server before its endpoints will respond. See <c>Extensions/README.md</c> for the supported extension list.</remarks>
+    ISwarmExtensions Extensions { get; }
 
     /// <summary>Performs a health check on the SwarmUI server.</summary>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>

@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using SwarmUI.ApiClient.Models.Common;
-using SwarmUI.ApiClient.Models.Enums;
-using SwarmUI.ApiClient.Models.Requests;
-using SwarmUI.ApiClient.Models.Responses;
+using SwarmUI.ApiClient.Contracts.Common;
+using SwarmUI.ApiClient.Contracts.Enums;
+using SwarmUI.ApiClient.Contracts.Requests;
+using SwarmUI.ApiClient.Contracts.Responses;
 
 namespace SwarmUI.ApiClient.Endpoints.Models;
 
