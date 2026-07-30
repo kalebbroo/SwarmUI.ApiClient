@@ -2,9 +2,9 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
+using SwarmUI.ApiClient.Contracts.Requests;
 using SwarmUI.ApiClient.Endpoints.Presets;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Models.Requests;
 using SwarmUI.ApiClient.Sessions;
 using Xunit;
 

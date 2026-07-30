@@ -2,7 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
-using SwarmUI.ApiClient.Models.Responses;
+using SwarmUI.ApiClient.Contracts.Responses;
 
 namespace SwarmUI.ApiClient.Endpoints.Backends;
 

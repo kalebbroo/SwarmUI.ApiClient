@@ -6,10 +6,10 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json.Linq;
+using SwarmUI.ApiClient.Contracts.Common;
+using SwarmUI.ApiClient.Contracts.Requests;
+using SwarmUI.ApiClient.Contracts.Responses;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Models.Common;
-using SwarmUI.ApiClient.Models.Requests;
-using SwarmUI.ApiClient.Models.Responses;
 using SwarmUI.ApiClient.Sessions;
 using SwarmUI.ApiClient.WebSockets;
 
