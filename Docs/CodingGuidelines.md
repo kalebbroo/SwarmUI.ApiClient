@@ -92,6 +92,14 @@ distinction structural rather than relying on comments:
   or gate extension dependent features.
 - Register a new extension in `ISwarmExtensions`, `SwarmExtensions`, and the table in
   `Extensions/README.md`.
+- Keep `ExtensionInfo.Endpoints` in step with the endpoint interface: one entry per SwarmUI endpoint
+  the extension adds. A test asserts every registered extension reports a non-empty endpoint list.
+- Where an extension's response shape is genuinely open ended (a provider result, a stored thread or
+  assistant blob, a streamed chat frame), model the guaranteed fields and keep the remainder
+  reachable via `JObject`, `JToken`, or `[JsonExtensionData]`. Do not invent a fixed shape for data
+  the server does not guarantee.
+- When an extension also registers T2I parameters or a model type into stock SwarmUI, that path stays
+  on the stock endpoints. The extension folder covers only the endpoints the extension itself adds.
 
 ## HTTP layer (SwarmHttpClient)
 

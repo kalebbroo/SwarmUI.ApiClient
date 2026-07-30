@@ -9,9 +9,28 @@ visible in the folder tree, the namespace, and the call site.
 
 ## Supported extensions
 
-| Extension | Folder | Endpoints | Repository |
-| --- | --- | --- | --- |
-| MagicPrompt | `MagicPrompt/` | `MagicPromptPhoneHome` | https://github.com/HartsyAI/SwarmUI-MagicPromptExtension |
+| Extension | Folder | Accessed via | Endpoints | Repository |
+| --- | --- | --- | --- | --- |
+| AudioLab | `AudioLab/` | `client.Extensions.AudioLab` | 18 | https://github.com/HartsyAI/SwarmUI-AudioLab |
+| LLM Assistant | `LLMAssistant/` | `client.Extensions.LLMAssistant` | 51 | https://github.com/HartsyAI/SwarmUI-LLMAssistant |
+| MagicPrompt | `MagicPrompt/` | `client.Extensions.MagicPrompt` | 1 | https://github.com/HartsyAI/SwarmUI-MagicPromptExtension |
+
+The exact endpoint names each extension adds are listed in its `ExtensionInfo`, and are reported at
+runtime through `client.Extensions.All`.
+
+## Where audio and LLM work actually happens
+
+Two of these extensions also register things into stock SwarmUI, so not every feature is reached
+through this folder:
+
+- **AudioLab** registers audio T2I parameters and an audio backend type, so generating audio from a
+  prompt runs through `client.Generation` with an audio model selected. `Extensions/AudioLab` covers
+  what that pipeline does not: direct synthesis and transcription, engine and model management,
+  format conversion, time stretch, and DAW project storage.
+- **LLM Assistant** registers `LLM` as a SwarmUI model type, so listing LLM model *files* works
+  through the stock `client.Models` endpoint with the LLM subtype. Use
+  `client.Extensions.LLMAssistant.GetModelsAsync` when you need the models a live LLM provider is
+  actually serving, which is a different question.
 
 ## Layout of an extension folder
 

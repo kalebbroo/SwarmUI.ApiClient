@@ -2,7 +2,7 @@
 
 **Professional C# client library for SwarmUI API**
 
-🚧 **v0.7.0-beta** 🚧
+🚧 **v0.8.0-beta** 🚧
 
 SwarmUI.ApiClient is a strongly-typed C# wrapper around the SwarmUI API, providing first-class support for text-to-image generation, model management, presets, user data, backends, and admin operations. The core implementation is in place and covered by unit tests; the API surface may still evolve before a 1.0.0 stable release.
 
@@ -56,10 +56,18 @@ SwarmUI.ApiClient/
     ├── ISwarmExtensions.cs        # Exposed as ISwarmClient.Extensions
     ├── ISwarmExtensionEndpoint.cs # Implemented by every extension endpoint group
     ├── SwarmExtensionInfo.cs      # Extension metadata for runtime discovery
+    ├── AudioLab/                  # AudioLab extension
+    │   ├── IAudioLabEndpoint.cs
+    │   ├── AudioLabEndpoint.cs
+    │   └── Contracts/             # Contracts owned by this extension
+    ├── LLMAssistant/              # LLM Assistant extension
+    │   ├── ILLMAssistantEndpoint.cs
+    │   ├── LLMAssistantEndpoint.cs
+    │   └── Contracts/
     └── MagicPrompt/               # MagicPrompt extension
         ├── IMagicPromptEndpoint.cs
         ├── MagicPromptEndpoint.cs
-        └── Contracts/             # Contracts owned by this extension
+        └── Contracts/
 ```
 
 ### Extension endpoints
@@ -74,12 +82,25 @@ ModelListResponse models = await client.Models.ListModelsAsync("Stable-Diffusion
 // Extension - requires SwarmUI-MagicPromptExtension installed on the server
 MagicPromptResponse enhanced = await client.Extensions.MagicPrompt.EnhancePromptAsync(request);
 
+// Extension - requires SwarmUI-AudioLab installed and an enabled Audio Backend
+TextToSpeechResponse speech = await client.Extensions.AudioLab.SynthesizeSpeechAsync(ttsRequest);
+
+// Extension - requires SwarmUI-LLMAssistant installed
+await foreach (ChatStreamUpdate update in client.Extensions.LLMAssistant.StreamMessageAsync(chatRequest))
+{
+    Console.Write(update.Raw["token"]);
+}
+
 // Which extensions this client supports
 foreach (SwarmExtensionInfo info in client.Extensions.All)
 {
     Console.WriteLine($"{info.DisplayName} -> {info.RepositoryUrl}");
 }
 ```
+
+Supported extensions: **AudioLab** (speech synthesis and transcription, audio engine and model
+management, format conversion, DAW projects), **LLM Assistant** (streaming chat threads, assistants,
+tools, LLM model management, per-user memory), and **MagicPrompt** (prompt enhancement).
 
 See [`Extensions/README.md`](./Extensions/README.md) for the supported extension registry and the
 steps for adding a new one.

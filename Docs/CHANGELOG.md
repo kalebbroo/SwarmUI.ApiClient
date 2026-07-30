@@ -1,5 +1,35 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.8.0-beta
+
+Adds typed coverage for the AudioLab and LLM Assistant extensions, using the per-extension layout
+introduced in 0.7.0-beta.
+
+- Added `Extensions/AudioLab` with 18 endpoints reached through `client.Extensions.AudioLab`: speech
+  synthesis and transcription, provider routed processing, chained workflows, provider and engine
+  status, streaming engine and bulk model installs, uninstall and weight removal, format conversion,
+  time stretch, and DAW project storage.
+- Added `Extensions/LLMAssistant` with 51 endpoints reached through
+  `client.Extensions.LLMAssistant`: non-streaming completion, streaming send, edit-into-branch and
+  regenerate-into-branch chat, thread and message management, per-thread assets, assistants,
+  instructions, tools and direct tool execution, settings and audit log, LLM model listing and
+  unloading, session state, companion context, and per-user memory.
+- Streaming install and chat operations run over the shared WebSocket client, so `SwarmExtensions`
+  now takes an `ISwarmWebSocketClient` alongside the HTTP client and session manager.
+- Chat stream frames are surfaced as `ChatStreamUpdate`, which types the guaranteed fields and
+  preserves the complete frame in `Raw`, since frame bodies vary by model, tool activity, and
+  compare mode.
+- Extension contracts model the servers' own envelopes, including AudioLab's `error_code` responses
+  and the LLM Assistant's in-band `success` and `error` fields, so failures are readable without
+  inspecting raw JSON.
+- Added unit tests for both extensions, plus shared test doubles under `Tests/Extensions` that the
+  MagicPrompt suite now uses as well.
+
+Neither extension's generation path is duplicated here: AudioLab registers audio T2I parameters and
+a backend type, so prompt-driven audio generation still runs through `client.Generation`, and LLM
+Assistant registers `LLM` as a SwarmUI model type, so listing LLM model files still runs through
+`client.Models`. See `Extensions/README.md`.
+
 ## 0.7.0-beta
 
 Restructures the library so endpoints backed by a SwarmUI server extension are structurally separate

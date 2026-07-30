@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using SwarmUI.ApiClient.Extensions.AudioLab;
+using SwarmUI.ApiClient.Extensions.LLMAssistant;
 using SwarmUI.ApiClient.Extensions.MagicPrompt;
 
 namespace SwarmUI.ApiClient.Extensions;
@@ -7,6 +9,12 @@ namespace SwarmUI.ApiClient.Extensions;
 /// <remarks>Each property maps to one extension and requires that extension to be installed on the target SwarmUI server. See <c>Extensions/README.md</c> for the supported extension list.</remarks>
 public interface ISwarmExtensions
 {
+    /// <summary>Access to the AudioLab extension for speech synthesis, transcription, audio engine management, and DAW projects.</summary>
+    IAudioLabEndpoint AudioLab { get; }
+
+    /// <summary>Access to the LLM Assistant extension for chat threads, assistants, tools, and LLM model management.</summary>
+    ILLMAssistantEndpoint LLMAssistant { get; }
+
     /// <summary>Access to the MagicPrompt extension for LLM backed prompt enhancement.</summary>
     IMagicPromptEndpoint MagicPrompt { get; }
 

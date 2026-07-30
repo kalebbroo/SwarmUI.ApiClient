@@ -114,7 +114,7 @@ public class SwarmClient : ISwarmClient
         Presets = new PresetsEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
         User = new UserEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
         Admin = new AdminEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
-        Extensions = new SwarmExtensions(Internal.SwarmHttpClient, Internal.SessionManager, loggerFactory: null);
+        Extensions = new SwarmExtensions(Internal.SwarmHttpClient, Internal.WebSocketClient, Internal.SessionManager, loggerFactory: null);
         Internal.Logger.LogInformation("SwarmClient initialized for {BaseUrl}", options.BaseUrl);
     }
 

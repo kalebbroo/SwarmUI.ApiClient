@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -6,8 +7,6 @@ using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Extensions;
 using SwarmUI.ApiClient.Extensions.MagicPrompt;
 using SwarmUI.ApiClient.Extensions.MagicPrompt.Contracts;
-using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Sessions;
 using Xunit;
 
 namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
@@ -15,54 +14,18 @@ namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
     /// <summary>Unit tests for <see cref="MagicPromptEndpoint"/> verifying payload shaping and extension metadata.</summary>
     public class MagicPromptEndpointTests
     {
-        /// <summary>Test HTTP client that records the last endpoint and payload and returns a configurable response.</summary>
-        private sealed class RecordingHttpClient : ISwarmHttpClient
+        /// <summary>Builds an endpoint over recording doubles.</summary>
+        private static MagicPromptEndpoint CreateEndpoint(RecordingExtensionHttpClient httpClient)
         {
-            public string? LastEndpoint { get; private set; }
-            public JObject? LastPayload { get; private set; }
-            public MagicPromptResponse ResponseToReturn { get; set; } = new MagicPromptResponse { Success = true, Response = "enhanced" };
-
-            public Task<TResponse> PostJsonAsync<TResponse>(string endpoint, object? payload = null, CancellationToken cancellationToken = default) where TResponse : class
-            {
-                LastEndpoint = endpoint;
-                LastPayload = payload as JObject ?? (payload is not null ? JObject.FromObject(payload) : new JObject());
-                throw new NotSupportedException("RecordingHttpClient only supports typed request overloads.");
-            }
-
-            public Task<TResponse> PostJsonAsync<TRequest, TResponse>(string endpoint, TRequest request, CancellationToken cancellationToken = default) where TRequest : class where TResponse : class
-            {
-                LastEndpoint = endpoint;
-                LastPayload = JObject.FromObject(request);
-                return Task.FromResult((TResponse)(object)ResponseToReturn);
-            }
-        }
-
-        /// <summary>Test implementation of <see cref="ISessionManager"/> that returns fixed session IDs.</summary>
-        private sealed class DummySessionManager : ISessionManager
-        {
-            public Task<string> GetOrCreateSessionAsync(CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult("session-1");
-            }
-
-            public Task<string> RefreshSessionAsync(CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult("session-2");
-            }
-
-            public void InvalidateSession()
-            {
-            }
-
-            public string? CurrentSessionId => "session-1";
+            return new MagicPromptEndpoint(httpClient, new StubSessionManager(), logger: null);
         }
 
         [Fact]
         public async Task EnhancePromptAsync_MapsRequestToExpectedPayload()
         {
-            RecordingHttpClient httpClient = new RecordingHttpClient();
-            DummySessionManager sessionManager = new DummySessionManager();
-            MagicPromptEndpoint endpoint = new MagicPromptEndpoint(httpClient, sessionManager, logger: null);
+            RecordingExtensionHttpClient httpClient = new RecordingExtensionHttpClient();
+            httpClient.ResponseToReturn = new JObject { ["success"] = true, ["response"] = "enhanced" };
+            MagicPromptEndpoint endpoint = CreateEndpoint(httpClient);
 
             MagicPromptRequest request = new MagicPromptRequest
             {
@@ -87,9 +50,9 @@ namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
         [Fact]
         public async Task EnhancePromptAsync_ThrowsWhenTextIsEmpty()
         {
-            RecordingHttpClient httpClient = new RecordingHttpClient();
-            DummySessionManager sessionManager = new DummySessionManager();
-            MagicPromptEndpoint endpoint = new MagicPromptEndpoint(httpClient, sessionManager, logger: null);
+            RecordingExtensionHttpClient httpClient = new RecordingExtensionHttpClient();
+            httpClient.ResponseToReturn = new JObject { ["success"] = true, ["response"] = "enhanced" };
+            MagicPromptEndpoint endpoint = CreateEndpoint(httpClient);
 
             MagicPromptRequest request = new MagicPromptRequest
             {
@@ -105,9 +68,8 @@ namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
         [Fact]
         public void Endpoint_ExposesExtensionMetadata()
         {
-            RecordingHttpClient httpClient = new RecordingHttpClient();
-            DummySessionManager sessionManager = new DummySessionManager();
-            MagicPromptEndpoint endpoint = new MagicPromptEndpoint(httpClient, sessionManager, logger: null);
+            RecordingExtensionHttpClient httpClient = new RecordingExtensionHttpClient();
+            MagicPromptEndpoint endpoint = CreateEndpoint(httpClient);
 
             ISwarmExtensionEndpoint extensionEndpoint = endpoint;
 
@@ -119,13 +81,15 @@ namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
         [Fact]
         public void SwarmExtensions_ReportsEverySupportedExtension()
         {
-            RecordingHttpClient httpClient = new RecordingHttpClient();
-            DummySessionManager sessionManager = new DummySessionManager();
-            SwarmExtensions extensions = new SwarmExtensions(httpClient, sessionManager, loggerFactory: null);
+            RecordingExtensionHttpClient httpClient = new RecordingExtensionHttpClient();
+            SwarmExtensions extensions = new SwarmExtensions(httpClient, new RecordingExtensionWebSocketClient(), new StubSessionManager(), loggerFactory: null);
 
-            Assert.NotEmpty(extensions.All);
+            Assert.Contains(extensions.All, info => info.Name == "AudioLab");
+            Assert.Contains(extensions.All, info => info.Name == "LLMAssistant");
             Assert.Contains(extensions.All, info => info.Name == "MagicPrompt");
+            Assert.Equal(extensions.All.Count, extensions.All.Select(info => info.Name).Distinct().Count());
             Assert.Equal(MagicPromptEndpoint.ExtensionInfo, extensions.MagicPrompt.Extension);
+            Assert.All(extensions.All, info => Assert.NotEmpty(info.Endpoints));
         }
 
         [Fact]
