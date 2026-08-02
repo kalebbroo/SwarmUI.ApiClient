@@ -1,6 +1,9 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Net;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -10,226 +13,324 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Polly;
 using SwarmUI.ApiClient.Exceptions;
+using SwarmUI.ApiClient.Http;
 using SwarmUI.ApiClient.Sessions;
 
 namespace SwarmUI.ApiClient.WebSockets;
 
-/// <summary>Provides WebSocket communication with SwarmUI API for streaming operations, such as image generation and model-related workflows.</summary>
-/// <remarks>Manages connection lifecycle, message streaming, retry logic, and graceful cleanup for SwarmUI WebSocket endpoints. For detailed behavior, error handling, and usage patterns, see CodingGuidelines.md (WebSockets section).</remarks>
+/// <summary>WebSocket communication layer for SwarmUI streaming endpoints.</summary>
+/// <remarks>Implements the session contract from the official API docs: when the server rejects a session id (one <c>invalid_session_id</c> frame, then close), the pooled session is CAS-invalidated, refreshed, and the connection retried — bounded by <see cref="SwarmClientOptions.SessionRefreshCap"/>. The server closes every socket with status 1000 whether the operation succeeded or failed, so termination is judged from frames, never close codes.</remarks>
 public class SwarmWebSocketClient : ISwarmWebSocketClient
 {
-    /// <summary>Internal implementation data containing WebSocket configuration and dependencies. Uses the Impl struct pattern to organize fields per coding guidelines.</summary>
-    public struct Impl
+    private readonly SwarmClientOptions _options;
+    private readonly ISessionManager _sessionManager;
+    private readonly IClientWebSocketFactory _socketFactory;
+    private readonly ResiliencePipeline _connectPipeline;
+    private readonly ILogger<SwarmWebSocketClient> _logger;
+    private readonly ConcurrentDictionary<Guid, IClientWebSocket> _activeConnections = new();
+    private readonly string _baseWsUrl;
+
+    /// <summary>Creates a new SwarmWebSocketClient using real WebSockets.</summary>
+    /// <param name="options">Client configuration options.</param>
+    /// <param name="sessionManager">Session pool for session id acquisition and invalidation.</param>
+    /// <param name="logger">Optional logger.</param>
+    public SwarmWebSocketClient(SwarmClientOptions options, ISessionManager sessionManager, ILogger<SwarmWebSocketClient>? logger = null)
+        : this(options, sessionManager, ClientWebSocketFactory.Instance, logger)
     {
-        /// <summary>Configuration options controlling WebSocket behavior. Includes buffer sizes, timeouts, retry settings, and connection parameters.</summary>
-        public SwarmClientOptions Options;
-
-        /// <summary>Session manager for obtaining session IDs required by WebSocket requests. Every WebSocket request must include a session_id in the initial payload.</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>Logger for debugging WebSocket lifecycle, messages, and errors. Uses NullLogger if none provided, so logging is always safe but optional.</summary>
-        public ILogger<SwarmWebSocketClient> Logger;
-
-        /// <summary>Tracks all active WebSocket connections for cleanup during disposal. Key is the session ID, value is the ClientWebSocket instance. Thread-safe for concurrent access from multiple generation operations.</summary>
-        public ConcurrentDictionary<string, ClientWebSocket> ActiveConnections;
-
-        /// <summary>WebSocket base URL derived from HTTP base URL. Converts http:// to ws:// and https:// to wss:// for WebSocket connections. Does not include the /API/ path - that's appended per endpoint.</summary>
-        public string BaseWsUrl;
     }
 
-    /// <summary>Internal implementation data. Do not use directly unless absolutely necessary.</summary>
-    public Impl Internal;
-
-    /// <summary>Creates a new SwarmWebSocketClient instance with the specified dependencies. Automatically converts the HTTP base URL to WebSocket format for connections.</summary>
-    /// <param name="options">Client configuration options. Must not be null.</param>
-    /// <param name="sessionManager">Session manager for obtaining session IDs. Must not be null.</param>
-    /// <param name="logger">Optional logger for WebSocket operations. Uses NullLogger if null.</param>
-    /// <remarks>The WebSocket base URL is derived from options.BaseUrl by replacing http:// with ws://
-    /// and https:// with wss://. This ensures secure connections when the HTTP client uses HTTPS.</remarks>
-    public SwarmWebSocketClient(SwarmClientOptions options, ISessionManager sessionManager, ILogger<SwarmWebSocketClient>? logger = null)
+    /// <summary>Test seam: create with a custom socket factory.</summary>
+    internal SwarmWebSocketClient(SwarmClientOptions options, ISessionManager sessionManager, IClientWebSocketFactory socketFactory, ILogger<SwarmWebSocketClient>? logger = null)
     {
-        Internal.Options = options ?? throw new ArgumentNullException(nameof(options));
-        Internal.SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
-        Internal.Logger = logger ?? NullLogger<SwarmWebSocketClient>.Instance;
-        Internal.ActiveConnections = new ConcurrentDictionary<string, ClientWebSocket>();
-        string baseUrl = options.BaseUrl;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
+        _socketFactory = socketFactory ?? throw new ArgumentNullException(nameof(socketFactory));
+        _connectPipeline = SwarmResiliencePipelines.BuildWebSocketConnectPipeline(options);
+        _logger = logger ?? NullLogger<SwarmWebSocketClient>.Instance;
+        string baseUrl = options.NormalizedBaseUrl;
         if (baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            Internal.BaseWsUrl = string.Concat("wss://", baseUrl.AsSpan(8));
+            _baseWsUrl = string.Concat("wss://", baseUrl.AsSpan(8));
         }
         else if (baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
         {
-            Internal.BaseWsUrl = string.Concat("ws://", baseUrl.AsSpan(7));
+            _baseWsUrl = string.Concat("ws://", baseUrl.AsSpan(7));
         }
         else
         {
-            // Assume non-secure if no protocol specified (e.g., localhost)
-            Internal.BaseWsUrl = "ws://" + baseUrl;
+            _baseWsUrl = "ws://" + baseUrl;
         }
     }
 
-    /// <summary>Streams messages from a SwarmUI WebSocket endpoint with automatic retry on connection failures.</summary>
-    /// <typeparam name="TUpdate">The type of update messages to yield to the caller.</typeparam>
-    /// <param name="endpoint">The WebSocket endpoint name without /API/ prefix (e.g., "GenerateText2ImageWS"). This should be the WS-suffixed version of the endpoint for streaming operations.</param>
-    /// <param name="request">The initial request payload to send after connection. Must not be null. The session_id field will be automatically added to this payload before sending.</param>
-    /// <param name="messageParser">Function to parse raw JSON messages into typed update objects. Called for each complete message received from the WebSocket. Should handle all expected message formats for the endpoint.</param>
-    /// <param name="cancellationToken">Cancellation token for the streaming operation.</param>
-    /// <returns>Async enumerable of parsed update messages. Use await foreach to process updates as they arrive.</returns>
-    /// <exception cref="SwarmWebSocketException">Thrown when connection fails after all retry attempts, or when an unrecoverable error occurs during message streaming.</exception>
-    /// <remarks>Handles session injection, buffering/chunking, retry with backoff, and graceful cleanup of connections. The caller provides a parser to turn raw JSON into typed updates. See CodingGuidelines.md (WebSockets section) for full behavior and error-handling details.</remarks>
-    public async IAsyncEnumerable<TUpdate> StreamMessagesAsync<TUpdate>(string endpoint, object request, Func<JObject, TUpdate> messageParser, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public async IAsyncEnumerable<JObject> StreamFramesAsync(string endpoint, JObject request, string sessionKey = SwarmSessionKeys.Default, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(endpoint))
         {
             throw new ArgumentException("Endpoint cannot be null or empty", nameof(endpoint));
         }
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(messageParser);
-        ClientWebSocket? webSocket = null;
-        string? sessionId = null;
+        ArgumentNullException.ThrowIfNull(sessionKey);
+        Connection connection = await EstablishAsync(endpoint, request, sessionKey, cancellationToken).ConfigureAwait(false);
+        Guid connectionId = Guid.NewGuid();
+        _activeConnections.TryAdd(connectionId, connection.Socket);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(_options.WebSocketBufferSize);
         try
         {
-            for (int retryCount = 0; retryCount <= Internal.Options.MaxRetryAttempts; retryCount++)
+            JObject? frame = connection.FirstFrame;
+            int consecutiveMalformed = 0;
+            while (frame is not null || connection.Open)
             {
-                try
+                if (frame is not null)
                 {
-                    sessionId = await Internal.SessionManager.GetOrCreateSessionAsync(cancellationToken).ConfigureAwait(false);
-                    webSocket = new ClientWebSocket();
-                    webSocket.Options.KeepAliveInterval = Internal.Options.KeepAliveInterval;
-                    if (!string.IsNullOrEmpty(Internal.Options.Authorization))
+                    if (frame.ContainsKey("keep_alive"))
                     {
-                        webSocket.Options.SetRequestHeader("Authorization", Internal.Options.Authorization);
+                        _logger.LogDebug("Consumed keep_alive ping from {Endpoint}", endpoint);
                     }
-                    Uri wsUri = new Uri($"{Internal.BaseWsUrl}/API/{endpoint}");
-                    Internal.Logger.LogDebug("Connecting to WebSocket: {Endpoint} (attempt {Attempt}/{MaxAttempts})", endpoint, retryCount + 1, Internal.Options.MaxRetryAttempts + 1);
-                    await webSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);
-                    Internal.Logger.LogInformation("WebSocket connected: {Endpoint}", endpoint);
-                    Internal.ActiveConnections.TryAdd(sessionId, webSocket);
-                    JObject payload = JObject.FromObject(request);
-                    payload["session_id"] = sessionId;
-                    string requestJson = JsonConvert.SerializeObject(payload);
-                    byte[] requestBytes = Encoding.UTF8.GetBytes(requestJson);
-                    await webSocket.SendAsync(new ArraySegment<byte>(requestBytes), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
-                    Internal.Logger.LogDebug("Sent WebSocket request payload for {Endpoint}", endpoint);
-                    break;
-                }
-                catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely && retryCount < Internal.Options.MaxRetryAttempts)
-                {
-                    int delayMs = 1000 * (retryCount + 1);
-                    Internal.Logger.LogWarning("WebSocket connection failed (attempt {Attempt}/{MaxAttempts}): {Error}. Retrying in {Delay}ms...",
-                        retryCount + 1, Internal.Options.MaxRetryAttempts + 1, ex.Message, delayMs);
-                    if (webSocket is not null)
+                    else
                     {
-                        webSocket.Dispose();
-                        webSocket = null;
-                    }
-                    await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-                catch (Exception ex)
-                {
-                    Internal.Logger.LogError(ex, "Failed to establish WebSocket connection to {Endpoint}", endpoint);
-                    throw new SwarmWebSocketException($"Failed to connect to WebSocket endpoint {endpoint} after {retryCount + 1} attempts");
-                }
-            }
-            // If we get here without a valid WebSocket, all retries failed and something went very wrong. Throw.
-            if (webSocket is null || webSocket.State is not WebSocketState.Open)
-            {
-                throw new SwarmWebSocketException($"Failed to establish WebSocket connection to {endpoint} after all retry attempts");
-            }
-            byte[] buffer = new byte[Internal.Options.WebSocketBufferSize];
-            StringBuilder messageBuilder = new();
-            while (webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
-            {
-                WebSocketReceiveResult result;
-                try
-                {
-                    result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    Internal.Logger.LogDebug("WebSocket receive cancelled for {Endpoint}", endpoint);
-                    break;
-                }
-                catch (WebSocketException ex) when (ex.WebSocketErrorCode is WebSocketError.ConnectionClosedPrematurely)
-                {
-                    Internal.Logger.LogWarning("WebSocket connection closed prematurely for {Endpoint}", endpoint);
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Internal.Logger.LogError(ex, "Error receiving WebSocket message from {Endpoint}", endpoint);
-                    throw new SwarmWebSocketException($"WebSocket receive error for {endpoint}");
-                }
-                if (result.MessageType is WebSocketMessageType.Close)
-                {
-                    Internal.Logger.LogInformation("Received Close frame from server for {Endpoint}", endpoint);
-                    break;
-                }
-                if (result.MessageType is WebSocketMessageType.Text)
-                {
-                    messageBuilder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
-                    if (result.EndOfMessage)
-                    {
-                        string message = messageBuilder.ToString();
-                        messageBuilder.Clear();
-                        JObject messageJson = JObject.Parse(message);
-                        TUpdate update = messageParser(messageJson);
-                        if (update is not null)
-                        {
-                            Internal.Logger.LogDebug("Received WebSocket message from {Endpoint}", endpoint);
-                            yield return update;
-                        }
+                        yield return frame;
                     }
                 }
+                frame = await ReceiveFrameAsync(connection, endpoint, buffer, () => consecutiveMalformed = 0, () => ++consecutiveMalformed, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
-            if (webSocket is not null)
+            ArrayPool<byte>.Shared.Return(buffer);
+            _activeConnections.TryRemove(connectionId, out _);
+            await GracefulCloseAsync(connection.Socket, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Per-stream connection state.</summary>
+    private sealed class Connection
+    {
+        public required IClientWebSocket Socket { get; init; }
+
+        /// <summary>The first frame received after the request payload was sent (already checked for session rejection), or null when the stream opened without one.</summary>
+        public JObject? FirstFrame { get; set; }
+
+        /// <summary>False once the server has closed or the receive loop has ended.</summary>
+        public bool Open { get; set; } = true;
+    }
+
+    /// <summary>Establishes a connection: connect (with transient retry), send the payload, read the first frame, and transparently refresh the session when the server rejects it — bounded by <see cref="SwarmClientOptions.SessionRefreshCap"/>.</summary>
+    private async Task<Connection> EstablishAsync(string endpoint, JObject request, string sessionKey, CancellationToken cancellationToken)
+    {
+        Uri wsUri = new($"{_baseWsUrl}/API/{endpoint}");
+        for (int refreshCycle = 0; ; refreshCycle++)
+        {
+            string sessionId = await _sessionManager.GetOrCreateSessionAsync(sessionKey, cancellationToken).ConfigureAwait(false);
+            IClientWebSocket? socket = null;
+            bool handedOff = false;
+            try
             {
-                Internal.Logger.LogDebug("Cleaning up WebSocket connection for {Endpoint}", endpoint);
-                await GracefulCloseAsync(webSocket, CancellationToken.None).ConfigureAwait(false);
-                if (sessionId is not null)
+                // Each connect attempt needs a fresh socket — a ClientWebSocket can only be connected once.
+                socket = await _connectPipeline.ExecuteAsync(
+                    async (state, ct) =>
+                    {
+                        IClientWebSocket attempt = state.self._socketFactory.Create();
+                        try
+                        {
+                            attempt.SetKeepAliveInterval(state.self._options.KeepAliveInterval);
+                            state.self.ApplyAuth(attempt);
+                            await attempt.ConnectAsync(state.wsUri, ct).ConfigureAwait(false);
+                            return attempt;
+                        }
+                        catch
+                        {
+                            attempt.Dispose();
+                            throw;
+                        }
+                    },
+                    (self: this, wsUri),
+                    cancellationToken).ConfigureAwait(false);
+                _logger.LogDebug("WebSocket connected: {Endpoint} (session key '{Key}')", endpoint, sessionKey);
+                JObject payload = (JObject)request.DeepClone();
+                payload["session_id"] = sessionId;
+                byte[] requestBytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload));
+                await socket.SendAsync(new ArraySegment<byte>(requestBytes), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+                // The server responds to a bad session with exactly one error frame, then a normal close.
+                Connection connection = new() { Socket = socket };
+                byte[] buffer = ArrayPool<byte>.Shared.Rent(_options.WebSocketBufferSize);
+                JObject? firstFrame;
+                try
                 {
-                    Internal.ActiveConnections.TryRemove(sessionId, out ClientWebSocket? _);
+                    int malformed = 0;
+                    firstFrame = await ReceiveFrameAsync(connection, endpoint, buffer, () => malformed = 0, () => ++malformed, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+                if (firstFrame is not null && string.Equals(firstFrame["error_id"]?.ToString(), "invalid_session_id", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("Server rejected session for key '{Key}' on {Endpoint} (cycle {Cycle}/{Cap})", sessionKey, endpoint, refreshCycle + 1, _options.SessionRefreshCap);
+                    _sessionManager.InvalidateSession(sessionKey, sessionId);
+                    if (refreshCycle + 1 >= _options.SessionRefreshCap)
+                    {
+                        throw new SwarmSessionException($"Session for key '{sessionKey}' was rejected {refreshCycle + 1} times in a row; giving up. {firstFrame["error"]}");
+                    }
+                    continue;
+                }
+                if (firstFrame is null && !connection.Open)
+                {
+                    // Server accepted the request and closed without frames — a legitimate (empty) stream, not an error.
+                    _logger.LogDebug("Server closed the WebSocket for {Endpoint} without sending any frame", endpoint);
+                }
+                connection.FirstFrame = firstFrame;
+                handedOff = true;
+                return connection;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (SwarmException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to establish WebSocket connection to {Endpoint}", endpoint);
+                throw new SwarmWebSocketException($"Failed to connect to WebSocket endpoint {endpoint}", socket?.State, ex);
+            }
+            finally
+            {
+                if (!handedOff)
+                {
+                    socket?.Dispose();
                 }
             }
         }
     }
 
-    /// <summary>Performs a best-effort graceful close handshake on a WebSocket connection.</summary>
-    /// <param name="webSocket">The WebSocket connection to close. Can be null.</param>
-    /// <param name="cancellationToken">Cancellation token for the operation. Note that close operations use a separate timeout from options.WebSocketCloseTimeout, so this token is primarily for coordination with parent operations.</param>
-    /// <remarks>Implements the RFC 6455 close sequence and swallows non-critical errors during cleanup. If the WebSocket is null or already closed/aborted, this method returns immediately. See CodingGuidelines.md (WebSockets section) for the full handshake flow.</remarks>
-    public async Task GracefulCloseAsync(ClientWebSocket webSocket, CancellationToken cancellationToken = default)
+    /// <summary>Applies header or cookie authentication to a socket per <see cref="SwarmClientOptions.AuthMode"/>.</summary>
+    private void ApplyAuth(IClientWebSocket socket)
     {
-        if (webSocket is null)
+        if (string.IsNullOrEmpty(_options.Authorization))
         {
             return;
         }
+        if (_options.AuthMode == SwarmAuthMode.SwarmTokenCookie)
+        {
+            CookieContainer cookies = new();
+            cookies.Add(new Uri(_options.NormalizedBaseUrl), new Cookie("swarm_token", _options.Authorization));
+            socket.SetCookies(cookies);
+        }
+        else
+        {
+            string headerName = string.IsNullOrWhiteSpace(_options.AuthorizationHeaderName) ? "Authorization" : _options.AuthorizationHeaderName;
+            socket.SetRequestHeader(headerName, _options.Authorization);
+        }
+    }
+
+    /// <summary>Receives and parses one complete JSON message. Returns null when the server closed the connection (also flips <see cref="Connection.Open"/>). Malformed frames are skipped with a warning; three in a row aborts the stream.</summary>
+    private async Task<JObject?> ReceiveFrameAsync(Connection connection, string endpoint, byte[] buffer, Action resetMalformed, Func<int> bumpMalformed, CancellationToken cancellationToken)
+    {
+        while (connection.Open)
+        {
+            using MemoryStream message = new();
+            while (true)
+            {
+                WebSocketReceiveResult result;
+                using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(_options.WebSocketReceiveTimeout);
+                try
+                {
+                    result = await connection.Socket.ReceiveAsync(new ArraySegment<byte>(buffer), timeoutCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Caller cancellation must surface as cancellation, not as a completed stream.
+                    _logger.LogDebug("WebSocket stream for {Endpoint} cancelled by caller", endpoint);
+                    connection.Open = false;
+                    throw;
+                }
+                catch (OperationCanceledException ex)
+                {
+                    connection.Open = false;
+                    throw new SwarmWebSocketException($"WebSocket receive from {endpoint} timed out after {_options.WebSocketReceiveTimeout}", connection.Socket.State, ex);
+                }
+                catch (WebSocketException ex) when (ex.WebSocketErrorCode is WebSocketError.ConnectionClosedPrematurely)
+                {
+                    _logger.LogWarning("WebSocket connection closed prematurely for {Endpoint}", endpoint);
+                    connection.Open = false;
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    connection.Open = false;
+                    throw new SwarmWebSocketException($"WebSocket receive error for {endpoint}", connection.Socket.State, ex);
+                }
+                if (result.MessageType is WebSocketMessageType.Close)
+                {
+                    _logger.LogDebug("Received Close frame from server for {Endpoint}", endpoint);
+                    connection.Open = false;
+                    return null;
+                }
+                if (message.Length + result.Count > _options.MaxWebSocketMessageBytes)
+                {
+                    connection.Open = false;
+                    throw new SwarmWebSocketException($"WebSocket message from {endpoint} exceeded the {_options.MaxWebSocketMessageBytes} byte limit", connection.Socket.State);
+                }
+                message.Write(buffer, 0, result.Count);
+                if (result.EndOfMessage)
+                {
+                    break;
+                }
+            }
+            if (message.Length == 0)
+            {
+                continue;
+            }
+            string text = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+            try
+            {
+                JObject frame = JObject.Parse(text);
+                resetMalformed();
+                return frame;
+            }
+            catch (JsonException ex)
+            {
+                int malformedCount = bumpMalformed();
+                _logger.LogWarning(ex, "Skipping malformed WebSocket frame from {Endpoint} ({Count} consecutive)", endpoint, malformedCount);
+                if (malformedCount >= 3)
+                {
+                    connection.Open = false;
+                    throw new SwarmWebSocketException($"Received {malformedCount} consecutive malformed frames from {endpoint}; aborting stream", connection.Socket.State, ex);
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Best-effort RFC 6455 close handshake; swallows all cleanup errors.</summary>
+    private async Task GracefulCloseAsync(IClientWebSocket socket, CancellationToken cancellationToken)
+    {
         try
         {
-            if (webSocket.State is WebSocketState.Open)
+            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
-                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None).ConfigureAwait(false);
-                using CancellationTokenSource cts = new(Internal.Options.WebSocketCloseTimeout);
+                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None).ConfigureAwait(false);
+                using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(_options.WebSocketCloseTimeout);
                 byte[] buffer = new byte[512];
-                while (webSocket.State is WebSocketState.CloseSent && !cts.IsCancellationRequested)
+                while (socket.State is WebSocketState.CloseSent && !cts.IsCancellationRequested)
                 {
                     try
                     {
-                        WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token).ConfigureAwait(false);
+                        WebSocketReceiveResult result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token).ConfigureAwait(false);
                         if (result.MessageType is WebSocketMessageType.Close)
                         {
-                            Internal.Logger.LogDebug("Received server Close acknowledgment");
                             break;
                         }
                     }
                     catch (OperationCanceledException)
                     {
-                        Internal.Logger.LogDebug("Timeout waiting for server Close acknowledgment");
                         break;
                     }
                     catch (WebSocketException)
@@ -241,45 +342,36 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
         }
         catch (Exception ex)
         {
-            Internal.Logger.LogDebug(ex, "Exception during WebSocket graceful close (ignored)");
+            _logger.LogDebug(ex, "Exception during WebSocket graceful close (ignored)");
         }
         finally
         {
             try
             {
-                webSocket.Dispose();
+                socket.Dispose();
             }
             catch (Exception ex)
             {
-                Internal.Logger.LogDebug(ex, "Exception disposing WebSocket (ignored)");
+                _logger.LogDebug(ex, "Exception disposing WebSocket (ignored)");
             }
         }
     }
 
-    /// <summary>Disconnects all active WebSocket connections tracked by this client.</summary>
-    /// <remarks>Performs graceful close handshakes for each connection and clears the tracking dictionary. Typically called from SwarmClient disposal paths. See CodingGuidelines.md (WebSockets section) for sequencing and error-handling details.</remarks>
-    public async Task DisconnectAllAsync()
+    /// <inheritdoc />
+    public async Task DisconnectAllAsync(CancellationToken cancellationToken = default)
     {
-        KeyValuePair<string, ClientWebSocket>[] connections = Internal.ActiveConnections.ToArray();
-        if (connections.Length is 0)
+        KeyValuePair<Guid, IClientWebSocket>[] connections = _activeConnections.ToArray();
+        if (connections.Length == 0)
         {
-            Internal.Logger.LogDebug("No active WebSocket connections to disconnect");
             return;
         }
-        Internal.Logger.LogInformation("Disconnecting {Count} active WebSocket connections", connections.Length);
-        Internal.ActiveConnections.Clear();
-        foreach (KeyValuePair<string, ClientWebSocket> connection in connections)
+        _logger.LogInformation("Disconnecting {Count} active WebSocket connections", connections.Length);
+        foreach (KeyValuePair<Guid, IClientWebSocket> connection in connections)
         {
-            try
+            if (_activeConnections.TryRemove(connection.Key, out IClientWebSocket? socket))
             {
-                await GracefulCloseAsync(connection.Value, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Internal.Logger.LogWarning(ex, "Error closing WebSocket connection for session {SessionId}",
-                    connection.Key.Length > 8 ? string.Concat(connection.Key.AsSpan(0, 8), "...") : connection.Key);
+                await GracefulCloseAsync(socket, cancellationToken).ConfigureAwait(false);
             }
         }
-        Internal.Logger.LogInformation("Disconnected all WebSocket connections");
     }
 }

@@ -17,4 +17,7 @@ public class HealthCheckResponse
 
     /// <summary>Optional SwarmUI server version information, when available.</summary>
     public string? ServerVersion { get; set; }
+
+    /// <summary>Optional SwarmUI server instance id, when available. Changes when the server restarts or updates.</summary>
+    public string? ServerId { get; set; }
 }

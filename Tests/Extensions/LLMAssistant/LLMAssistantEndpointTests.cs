@@ -16,7 +16,7 @@ namespace SwarmUI.ApiClient.Tests.Extensions.LLMAssistant
         /// <summary>Builds an endpoint over recording doubles.</summary>
         private static LLMAssistantEndpoint CreateEndpoint(RecordingExtensionHttpClient httpClient, RecordingExtensionWebSocketClient webSocketClient)
         {
-            return new LLMAssistantEndpoint(httpClient, webSocketClient, new StubSessionManager(), logger: null);
+            return new LLMAssistantEndpoint(httpClient, webSocketClient, SwarmUI.ApiClient.Sessions.SwarmSessionKeys.Default, logger: null);
         }
 
         [Fact]

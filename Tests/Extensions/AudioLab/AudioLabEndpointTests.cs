@@ -16,7 +16,7 @@ namespace SwarmUI.ApiClient.Tests.Extensions.AudioLab
         /// <summary>Builds an endpoint over recording doubles.</summary>
         private static AudioLabEndpoint CreateEndpoint(RecordingExtensionHttpClient httpClient, RecordingExtensionWebSocketClient webSocketClient)
         {
-            return new AudioLabEndpoint(httpClient, webSocketClient, new StubSessionManager(), logger: null);
+            return new AudioLabEndpoint(httpClient, webSocketClient, SwarmUI.ApiClient.Sessions.SwarmSessionKeys.Default, logger: null);
         }
 
         [Fact]

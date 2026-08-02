@@ -1,276 +1,247 @@
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json;
 
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
 /// <summary>Request parameters for text-to-image generation via SwarmUI.</summary>
-/// <remarks>Used with <c>GenerationEndpoint.StreamGenerationAsync</c> to initiate image generation. See <c>T2IAPI.md</c> for the full JSON schema and backend-specific behavior.</remarks>
+/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list. Extension-region parameters require the corresponding server extension to be installed.</remarks>
 public class GenerationRequest
 {
-    /// <summary>Number of images to generate (deprecated; prefer <see cref="BatchSize"/>).</summary>
-    /// <remarks>Kept for API compatibility. For most use cases, set this to 1 and control parallelism via <see cref="BatchSize"/>.</remarks>
+    /// <summary>Number of images to generate for this request. Each image is an independent job with its own <c>batch_index</c>.</summary>
+    /// <remarks>Server limit: 1–10000.</remarks>
+    [JsonProperty("images")]
     public int Images { get; set; } = 1;
+
+    /// <summary>Per-backend batch size: how many images each backend generates simultaneously in one pass.</summary>
+    /// <remarks>Total images produced = <see cref="Images"/> × <see cref="BatchSize"/> in SwarmUI's accounting; most callers should set <see cref="Images"/> and leave this at 1. Higher values increase GPU memory usage. Server limit: 1–100.</remarks>
+    [JsonProperty("batchsize")]
+    public int BatchSize { get; set; } = 1;
 
     /// <summary>Text description of what you want to generate. This is the primary input that guides the AI model.</summary>
     /// <value>Required. Cannot be null or empty.</value>
     /// <example>"a beautiful sunset over mountains, vibrant colors, dramatic clouds, 8k quality"</example>
+    [JsonProperty("prompt")]
     public string Prompt { get; set; } = string.Empty;
 
-    /// <summary>Text description of what you DON'T want in the generated image. Used to guide the model away from undesired elements, artifacts, or styles.</summary>
+    /// <summary>Text description of what you DON'T want in the generated image. Omitted from the payload when empty.</summary>
     /// <example>"blurry, low quality, watermark, text, distorted"</example>
+    [JsonProperty("negativeprompt")]
     public string? NegativePrompt { get; set; } = string.Empty;
 
     /// <summary>Width of generated images in pixels.</summary>
-    /// <remarks>Valid ranges depend on the selected model and backend; very large dimensions may exceed available GPU memory.</remarks>
+    [JsonProperty("width")]
     public int Width { get; set; } = 1024;
 
-    /// <summary>Height of generated images in pixels. Must be compatible with the selected model.</summary>
+    /// <summary>Height of generated images in pixels.</summary>
+    [JsonProperty("height")]
     public int Height { get; set; } = 768;
 
     /// <summary>Number of denoising steps to perform during generation.</summary>
-    /// <remarks>More steps generally improve quality at the cost of speed. Recommended ranges depend on sampler and model; see the SwarmUI generation documentation.</remarks>
+    [JsonProperty("steps")]
     public int Steps { get; set; } = 20;
 
     /// <summary>Classifier-free guidance scale controlling how strongly the model follows the prompt.</summary>
-    /// <remarks>Higher values increase prompt adherence but can reduce creativity or introduce artifacts. Recommended ranges vary by model family (for example, Flux typically uses lower values).</remarks>
+    [JsonProperty("cfgscale")]
     public float CfgScale { get; set; } = 7.0f;
 
     /// <summary>Sampling algorithm used to denoise the image.</summary>
-    /// <remarks>Available samplers depend on the backend and trade off quality, speed, and determinism. See backend documentation for supported values.</remarks>
+    [JsonProperty("sampler")]
     public string Sampler { get; set; } = "dpmpp_2m_sde";
 
     /// <summary>Noise schedule algorithm controlling how noise is removed across steps. Works in combination with the sampler.</summary>
+    [JsonProperty("scheduler")]
     public string? Scheduler { get; set; } = "normal";
 
-    /// <summary>Random seed for reproducibility. Using the same seed with identical parameters will produce the same image.</summary>
-    public string? Seed { get; set; } = "-1";
+    /// <summary>Random seed for reproducibility. -1 (default) requests a random seed and is omitted from the payload.</summary>
+    [JsonProperty("seed")]
+    public long Seed { get; set; } = -1;
 
-    /// <summary>Optional style preset name to apply. Style presets are pre-configured prompt modifications that apply consistent artistic styles.</summary>
-    public string? StylePreset { get; set; }
-
-    /// <summary>Number of images to generate in parallel across available GPU backends.</summary>
-    /// <remarks>Controls parallel generation in SwarmUI. Each image is an independent job with its own <c>batch_index</c>. Higher values increase concurrency and GPU memory usage.</remarks>
-    public int BatchSize { get; set; } = 1;
-
-    /// <summary>Whether to skip saving generated images to SwarmUI's output folder. When true, images are only returned via WebSocket and not persisted to disk on the server.</summary>
+    /// <summary>Whether to skip saving generated images to SwarmUI's output folder. When true, images are returned as base64 data URLs instead of server file paths.</summary>
+    [JsonProperty("donotsave")]
     public bool DoNotSave { get; set; } = true;
 
+    /// <summary>Whether to skip saving intermediate (non-final) images, such as segmentation masks or refiner stages.</summary>
+    [JsonProperty("donotsaveintermediates")]
+    public bool? DoNotSaveIntermediates { get; set; }
+
     /// <summary>Output image format specification. Common values: "PNG", "JPG", "WEBP_LOSSLESS", "WEBP_LOSSY".</summary>
+    [JsonProperty("imageformat")]
     public string ImageFormat { get; set; } = "PNG";
 
-    /// <summary>Name or path of the model to use for generation. This must match a model available in your SwarmUI instance.</summary>
-    /// <remarks>Different models have different capabilities, styles, and recommended resolutions. See the SwarmUI models documentation for guidance.</remarks>
+    /// <summary>Name or path of the model to use for generation. Must match a model available in your SwarmUI instance. Omitted from the payload when empty.</summary>
+    [JsonProperty("model")]
     public string? Model { get; set; }
 
+    /// <summary>Names of SwarmUI presets to apply to this request. Presets are applied server-side on top of the explicit parameters.</summary>
+    [JsonProperty("presets")]
+    public List<string>? Presets { get; set; }
+
     /// <summary>List of LoRA (Low-Rank Adaptation) models to apply.</summary>
-    /// <remarks>Use LoRAs to adapt the base model toward specific styles, characters, or concepts. Weight typically ranges around 0.5–1.5 depending on the LoRA.</remarks>
+    /// <remarks>Serialized as parallel <c>loras</c>/<c>loraweights</c> JSON arrays (safe for names containing commas); weights keep full precision.</remarks>
+    [JsonIgnore]
     public List<LoraModel>? Loras { get; set; }
 
-    /// <summary>Base64-encoded initial image for img2img generation. When provided, generation starts from this image instead of random noise.</summary>
+    /// <summary>Base64-encoded initial image (or data URL) for img2img generation. When provided, generation starts from this image instead of random noise.</summary>
+    [JsonProperty("initimage")]
     public string? InitImage { get; set; }
 
-    /// <summary>Controls how much the output can differ from InitImage in img2img mode. Range: 0.0 to 1.0.</summary>
-    /// <remarks>Also known as "denoising strength". Lower values keep the output closer to the input image; higher values allow more change.</remarks>
+    /// <summary>Controls how much the output can differ from InitImage in img2img mode. Range: 0.0 to 1.0. Only sent when <see cref="InitImage"/> is set.</summary>
+    [JsonProperty("initimagecreativity")]
     public float InitImageCreativity { get; set; } = 0.7f;
 
-    /// <summary>Flux-specific guidance scale parameter. Flux models use a different guidance mechanism than traditional CFG.</summary>
-    public string? FluxGuidanceScale { get; set; }
+    /// <summary>Aspect ratio (e.g. "1:1", "16:9"). SwarmUI derives width/height from this when set to a non-custom value.</summary>
+    [JsonProperty("aspectratio")]
+    public string? AspectRatio { get; set; }
 
-    /// <summary>Sigma shift parameter for SD3, AuraFlow, Flux, and similar models. Controls balance between structural and detail steps.</summary>
+    /// <summary>Flux guidance scale for Flux-Dev and related models (distilled guidance, not CFG). 3.5 is the model default.</summary>
+    [JsonProperty("fluxguidancescale")]
+    public double? FluxGuidanceScale { get; set; }
+
+    /// <summary>Sigma shift parameter for rectified-flow models (SD3, AuraFlow, Flux, HiDream).</summary>
     /// <remarks>SD3: 1.5-3 (default 3), AuraFlow: 1.73, Flux-Dev: ~1.15</remarks>
-    public float? SigmaShift { get; set; }
+    [JsonProperty("sigmashift")]
+    public double? SigmaShift { get; set; }
 
     /// <summary>CLIP layer to stop at for SD1.5 models. -1 is default, some models prefer -2.</summary>
+    [JsonProperty("clipstopatlayer")]
     public int? ClipStopAtLayer { get; set; }
 
     /// <summary>VAE tile size in pixels for reducing VRAM usage during decode.</summary>
+    [JsonProperty("vaetilesize")]
     public int? VaeTileSize { get; set; }
 
     /// <summary>Minimum sigma value for Karras/Exponential schedulers.</summary>
-    public float? SamplerSigmaMin { get; set; }
+    [JsonProperty("samplersigmamin")]
+    public double? SamplerSigmaMin { get; set; }
 
     /// <summary>Maximum sigma value for Karras/Exponential schedulers.</summary>
-    public float? SamplerSigmaMax { get; set; }
+    [JsonProperty("samplersigmamax")]
+    public double? SamplerSigmaMax { get; set; }
 
     /// <summary>Rho value for Karras/Exponential schedulers.</summary>
-    public float? SamplerRho { get; set; }
+    [JsonProperty("samplerrho")]
+    public double? SamplerRho { get; set; }
 
     /// <summary>When true, zeroes the negative prompt if empty. May yield better quality on SD3.</summary>
+    [JsonProperty("zeronegative")]
     public bool? ZeroNegative { get; set; }
 
-    #region API Backend Extension
-    // NOTE:
-    // The parameters below apply ONLY to Flux models when accessed via Swarm
-    // using the Hartsy API Backends extension.
+    #region API Backends extension — Black Forest Labs (Flux via API)
+    // These parameters require the SwarmUI-API-Backends server extension.
 
-    /// <summary>BFL content moderation level. 0 = strictest, 5 = most permissive. Default: 2.</summary>
+    /// <summary>BFL content moderation level ("Safety Filter Level"). 0 = strictest, 6 = most permissive.</summary>
+    [JsonProperty("safetyfilterlevel")]
     public int? SafetyTolerance { get; set; }
 
-    /// <summary>BFL output image format. jpeg or png.</summary>
+    /// <summary>BFL output image format ("Output Format"). jpeg or png.</summary>
+    [JsonProperty("outputformat")]
     public string? OutputFormat { get; set; }
 
-    /// <summary>BFL Guidance scale for FLUX.2 [flex]. Controls how closely the output follows the prompt. Range: 1.5-10, default: 4.5.</summary>
-    public float? Guidance { get; set; }
+    /// <summary>BFL prompt guidance scale ("Prompt Guidance"). Controls how closely the output follows the prompt.</summary>
+    [JsonProperty("promptguidance")]
+    public double? Guidance { get; set; }
 
-    /// <summary>Whether to use prompt upsampling for BFL models.</summary>
+    /// <summary>Whether BFL should enhance/upsample the prompt before generation ("Prompt Enhancement").</summary>
+    [JsonProperty("promptenhancement")]
     public bool? PromptUpsampling { get; set; }
-
-    /// <summary>Webhook URL for BFL API notifications.</summary>
-    public string? WebhookUrl { get; set; }
-
-    /// <summary>Webhook secret for BFL API notifications.</summary>
-    public string? WebhookSecret { get; set; }
-
-    /// <summary>Aspect ratio for BFL models (e.g., "1:1", "16:9").</summary>
-    public string? AspectRatio { get; set; }
     #endregion
 
-    #region OpenAI API Parameters
-    // NOTE:
-    // The parameters below apply ONLY to OpenAI models (DALL-E 2, DALL-E 3, GPT-Image-1, GPT-Image-1.5)
-    // when accessed via SwarmUI using the API Backends extension.
-
-    /// <summary>OpenAI image quality level. 
-    /// GPT models: auto/high/medium/low. DALL-E 3: hd/standard. DALL-E 2: standard only.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_quality")]
+    #region API Backends extension — OpenAI (DALL-E, GPT-Image)
+    /// <summary>Image quality for GPT-Image models ("Quality"): auto/high/medium/low.</summary>
+    /// <remarks>DALL-E 3's separate hd/standard quality parameter is "Generation Quality" (<c>generationquality</c>) server-side.</remarks>
+    [JsonProperty("quality")]
     public string? OpenAIQuality { get; set; }
 
-    /// <summary>OpenAI DALL-E 3 style. vivid = hyper-real/dramatic, natural = more realistic.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_style")]
+    /// <summary>DALL-E 3 visual style ("Visual Style"): vivid = hyper-real/dramatic, natural = more realistic.</summary>
+    [JsonProperty("visualstyle")]
     public string? OpenAIStyle { get; set; }
 
-    /// <summary>OpenAI image size. Model-specific allowed values.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_size")]
+    /// <summary>OpenAI output resolution ("Output Resolution"). Model-specific allowed values.</summary>
+    [JsonProperty("outputresolution")]
     public string? OpenAISize { get; set; }
 
-    /// <summary>OpenAI GPT model background transparency. auto/transparent/opaque.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_background")]
+    /// <summary>GPT-Image background transparency ("Background"): auto/transparent/opaque.</summary>
+    [JsonProperty("background")]
     public string? OpenAIBackground { get; set; }
 
-    /// <summary>OpenAI GPT model content moderation level. auto/low.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_moderation")]
+    /// <summary>GPT-Image content moderation level ("Content Moderation"): auto/low.</summary>
+    [JsonProperty("contentmoderation")]
     public string? OpenAIModeration { get; set; }
 
-    /// <summary>OpenAI GPT model output format. png/jpeg/webp.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_output_format")]
+    /// <summary>GPT-Image output format ("Image Output Format"): png/jpeg/webp.</summary>
+    [JsonProperty("imageoutputformat")]
     public string? OpenAIOutputFormat { get; set; }
-
-    /// <summary>OpenAI number of images to generate. 1-10, but DALL-E 3 only supports 1.</summary>
-    [Newtonsoft.Json.JsonProperty("openai_n")]
-    public int? OpenAIN { get; set; }
     #endregion
 
-    #region Ideogram API Parameters
-    // NOTE:
-    // The parameters below apply ONLY to Ideogram models (V1, V1-Turbo, V2, V2-Turbo, V2a, V2a-Turbo, V3)
-    // when accessed via SwarmUI using the API Backends extension.
-
-    /// <summary>Ideogram resolution preset for V3 models (e.g., "1024x1024", "1024x768").
-    /// Cannot be used in conjunction with aspect_ratio.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_resolution")]
-    public string? IdeogramResolution { get; set; }
-
-    /// <summary>Ideogram aspect ratio (e.g., "1:1", "16:9", "4:3").
-    /// Cannot be used in conjunction with resolution. Defaults to 1:1.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_aspect_ratio")]
+    #region API Backends extension — Ideogram
+    /// <summary>Ideogram aspect ratio ("Ideogram Aspect Ratio"), e.g. "1:1", "16:9". Defaults to 1:1 server-side.</summary>
+    [JsonProperty("ideogramaspectratio")]
     public string? IdeogramAspectRatio { get; set; }
 
-    /// <summary>Ideogram rendering speed for V3: DEFAULT, TURBO, QUALITY.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_rendering_speed")]
+    /// <summary>Ideogram V3 rendering speed ("Rendering Speed"): DEFAULT, TURBO, QUALITY.</summary>
+    [JsonProperty("renderingspeed")]
     public string? IdeogramRenderingSpeed { get; set; }
 
-    /// <summary>Ideogram MagicPrompt mode: AUTO, ON, OFF.
-    /// Determines if MagicPrompt should be used in generating the request.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_magic_prompt")]
+    /// <summary>Ideogram V4 rendering speed ("Ideogram V4 Rendering Speed").</summary>
+    [JsonProperty("ideogramvrenderingspeed")]
+    public string? IdeogramV4RenderingSpeed { get; set; }
+
+    /// <summary>Ideogram MagicPrompt mode ("Magic Prompt Enhancement"): AUTO, ON, OFF.</summary>
+    [JsonProperty("magicpromptenhancement")]
     public string? IdeogramMagicPrompt { get; set; }
 
-    /// <summary>Ideogram negative prompt - description of what to exclude from the image.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_negative_prompt")]
-    public string? IdeogramNegativePrompt { get; set; }
-
-    /// <summary>Ideogram number of images to generate (1-8). Defaults to 1.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_num_images")]
-    public int? IdeogramNumImages { get; set; }
-
-    /// <summary>Ideogram color palette preset name (e.g., "EMBER", "FRESH", "JUNGLE").
-    /// Not supported by V1, V1-Turbo, V2a, V2a-Turbo models.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_color_palette")]
+    /// <summary>Ideogram color palette preset ("Color Theme"), e.g. "EMBER", "FRESH", "JUNGLE".</summary>
+    [JsonProperty("colortheme")]
     public string? IdeogramColorPalette { get; set; }
 
-    /// <summary>Ideogram style codes - list of 8-character hexadecimal codes.
-    /// Cannot be used with style_reference_images or style_type.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_style_codes")]
-    public List<string>? IdeogramStyleCodes { get; set; }
-
-    /// <summary>Ideogram style type: GENERAL, REALISTIC, DESIGN, RENDER_3D, ANIME.
-    /// Defaults to GENERAL.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_style_type")]
+    /// <summary>Ideogram style ("Generation Style"): GENERAL, REALISTIC, DESIGN, RENDER_3D, ANIME.</summary>
+    [JsonProperty("generationstyle")]
     public string? IdeogramStyleType { get; set; }
-
-    /// <summary>Ideogram style preset - predefined artistic style for V3 models.</summary>
-    [Newtonsoft.Json.JsonProperty("ideogram_style_preset")]
-    public string? IdeogramStylePreset { get; set; }
     #endregion
 
-    #region Google API Parameters
-    // NOTE:
-    // The parameters below apply ONLY to Google models (Gemini, Imagen)
-    // when accessed via SwarmUI using the API Backends extension.
+    #region API Backends extension — Google (Gemini, Imagen)
+    /// <summary>Google aspect ratio ("Google Aspect Ratio"): 1:1, 3:4, 4:3, 9:16, 16:9. Applies to Gemini and Imagen models.</summary>
+    [JsonProperty("googleaspectratio")]
+    public string? GoogleAspectRatio { get; set; }
 
-    /// <summary>Google Gemini response modalities. Valid values: IMAGE, TEXT.</summary>
-    [Newtonsoft.Json.JsonProperty("google_gemini_response_modalities")]
-    public string? GoogleGeminiResponseModalities { get; set; }
-
-    /// <summary>Google Gemini image size. Valid values: 1K, 2K.</summary>
-    [Newtonsoft.Json.JsonProperty("google_gemini_image_size")]
+    /// <summary>Gemini image resolution ("Gemini Image Resolution"): 1K, 2K, 4K.</summary>
+    [JsonProperty("geminiimageresolution")]
     public string? GoogleGeminiImageSize { get; set; }
 
-    /// <summary>Google Gemini aspect ratio. Valid values: 1:1, 3:4, 4:3, 9:16, 16:9.</summary>
-    [Newtonsoft.Json.JsonProperty("google_gemini_aspect_ratio")]
-    public string? GoogleGeminiAspectRatio { get; set; }
-
-    /// <summary>Google Imagen number of images to generate. Valid range: 1-4.</summary>
-    [Newtonsoft.Json.JsonProperty("google_imagen_num_images")]
-    public int? GoogleImagenNumImages { get; set; }
-
-    /// <summary>Google Imagen image size. Valid values: 1K, 2K (not available for Fast model).</summary>
-    [Newtonsoft.Json.JsonProperty("google_imagen_size")]
+    /// <summary>Imagen image size ("Google Image Size"): 1K, 2K.</summary>
+    [JsonProperty("googleimagesize")]
     public string? GoogleImagenSize { get; set; }
 
-    /// <summary>Google Imagen aspect ratio. Valid values: 1:1, 3:4, 4:3, 9:16, 16:9.</summary>
-    [Newtonsoft.Json.JsonProperty("google_imagen_aspect_ratio")]
-    public string? GoogleImagenAspectRatio { get; set; }
-
-    /// <summary>Google Imagen person generation mode. Valid values: dont_allow, allow_adult, allow_all.</summary>
-    [Newtonsoft.Json.JsonProperty("google_imagen_person_generation")]
+    /// <summary>Imagen person generation mode ("Person Generation"): dont_allow, allow_adult, allow_all.</summary>
+    [JsonProperty("persongeneration")]
     public string? GoogleImagenPersonGeneration { get; set; }
-
-    /// <summary>Google Imagen negative prompt - description of what to exclude from the image.</summary>
-    [Newtonsoft.Json.JsonProperty("google_imagen_negative_prompt")]
-    public string? GoogleImagenNegativePrompt { get; set; }
     #endregion
 
-    #region Grok API Parameters
-    // NOTE:
-    // The parameters below apply ONLY to Grok models (grok-2-image)
-    // when accessed via SwarmUI using the API Backends extension.
+    #region API Backends extension — Grok
+    /// <summary>Grok aspect ratio ("Grok Aspect Ratio").</summary>
+    [JsonProperty("grokaspectratio")]
+    public string? GrokAspectRatio { get; set; }
 
-    /// <summary>Grok number of images to generate (1-10). Defaults to 1.</summary>
-    [Newtonsoft.Json.JsonProperty("grok_n")]
-    public int? GrokN { get; set; }
-
-    /// <summary>Grok image quality level: low, medium, high. Controls generation speed and quality balance.</summary>
-    [Newtonsoft.Json.JsonProperty("grok_quality")]
-    public string? GrokQuality { get; set; }
-
-    /// <summary>Grok response format: url (direct image URL) or b64_json (base64 encoded JSON).</summary>
-    [Newtonsoft.Json.JsonProperty("grok_response_format")]
-    public string? GrokResponseFormat { get; set; }
-
-    /// <summary>Grok user identifier for request tracking and analytics. Optional.</summary>
-    [Newtonsoft.Json.JsonProperty("grok_user")]
-    public string? GrokUser { get; set; }
+    /// <summary>Grok output resolution ("Grok Output Resolution").</summary>
+    [JsonProperty("grokoutputresolution")]
+    public string? GrokOutputResolution { get; set; }
     #endregion
+
+    /// <summary>Newtonsoft conditional serialization: omit seed when random (-1).</summary>
+    public bool ShouldSerializeSeed() => Seed != -1;
+
+    /// <summary>Newtonsoft conditional serialization: omit empty negative prompt.</summary>
+    public bool ShouldSerializeNegativePrompt() => !string.IsNullOrEmpty(NegativePrompt);
+
+    /// <summary>Newtonsoft conditional serialization: omit empty model.</summary>
+    public bool ShouldSerializeModel() => !string.IsNullOrEmpty(Model);
+
+    /// <summary>Newtonsoft conditional serialization: init image creativity only makes sense with an init image.</summary>
+    public bool ShouldSerializeInitImageCreativity() => !string.IsNullOrEmpty(InitImage);
+
+    /// <summary>Newtonsoft conditional serialization: omit empty preset list.</summary>
+    public bool ShouldSerializePresets() => Presets is { Count: > 0 };
 }
 
 /// <summary>Represents a LoRA (Low-Rank Adaptation) model to apply during generation.</summary>
@@ -281,6 +252,5 @@ public class LoraModel
     public string Name { get; set; } = string.Empty;
 
     /// <summary>Strength multiplier for this LoRA's effect (typical range 0.5–1.5, default 1.0).</summary>
-    /// <remarks>Some LoRAs are trained for specific weights; check the LoRA's documentation or experiment to find an appropriate value.</remarks>
     public float Weight { get; set; } = 1.0f;
 }

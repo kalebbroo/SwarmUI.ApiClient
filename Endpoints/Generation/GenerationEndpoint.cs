@@ -1,115 +1,198 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Contracts.Common;
 using SwarmUI.ApiClient.Contracts.Requests;
 using SwarmUI.ApiClient.Contracts.Responses;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Sessions;
 using SwarmUI.ApiClient.WebSockets;
 
 namespace SwarmUI.ApiClient.Endpoints.Generation;
 
 /// <summary>Provides access to SwarmUI text-to-image generation endpoints.</summary>
-/// <remarks>Coordinates request shaping, WebSocket-based streaming, and related control operations (status, refresh, interrupt). See CodingGuidelines.md (Generation endpoint section) for implementation details.</remarks>
+/// <remarks>Streaming follows the server's actual lifecycle: frames flow until a <c>socket_intention:"close"</c> frame marks the batch done, at which point exactly one terminal "complete" update is emitted. Image counting is never used for completion detection — discarded indices, grid composites (batch_index "-1"), intermediates, and API-backend image counts all make counters unreliable.</remarks>
 public class GenerationEndpoint : IGenerationEndpoint
 {
-    /// <summary>Internal implementation data containing dependencies for the generation endpoint.</summary>
-    public struct Impl
+    /// <summary>Serializer honoring the [JsonProperty] wire names on GenerationRequest and omitting nulls.</summary>
+    private static readonly JsonSerializer PayloadSerializer = JsonSerializer.Create(new JsonSerializerSettings
     {
-        /// <summary>HTTP client wrapper for non-streaming generation operations (status, refresh, interrupt, etc.).</summary>
-        public ISwarmHttpClient HttpClient;
+        NullValueHandling = NullValueHandling.Ignore
+    });
 
-        /// <summary>WebSocket client for streaming generation via GenerateText2ImageWS.</summary>
-        public ISwarmWebSocketClient WebSocketClient;
+    private readonly ISwarmHttpClient _httpClient;
+    private readonly ISwarmWebSocketClient _webSocketClient;
+    private readonly string _sessionKey;
+    private readonly ILogger<GenerationEndpoint> _logger;
 
-        /// <summary>Session manager used indirectly by the HTTP and WebSocket clients.</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>Logger for generation operations.</summary>
-        public ILogger<GenerationEndpoint> Logger;
-    }
-
-    /// <summary>Internal implementation data for advanced scenarios; normal usage should go through the public members.</summary>
-    public Impl Internal;
-
-    /// <summary>Creates a new GenerationEndpoint instance with the specified dependencies.</summary>
-    /// <param name="httpClient">HTTP client wrapper for non-streaming operations. Must not be null.</param>
-    /// <param name="webSocketClient">WebSocket client for streaming generation. Must not be null.</param>
-    /// <param name="sessionManager">Session manager used indirectly by HTTP/WebSocket layers. Must not be null.</param>
-    /// <param name="logger">Optional logger for generation operations. Uses NullLogger if null.</param>
-    /// <remarks>Depends on injected HTTP, WebSocket, and session services; resource ownership stays in SwarmClient. See CodingGuidelines.md (Generation endpoint section) for DI and testing guidance.</remarks>
-    public GenerationEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, ISessionManager sessionManager, ILogger<GenerationEndpoint>? logger = null)
+    /// <summary>Creates a new GenerationEndpoint.</summary>
+    /// <param name="httpClient">HTTP client wrapper for non-streaming operations.</param>
+    /// <param name="webSocketClient">WebSocket client for streaming generation.</param>
+    /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
+    /// <param name="logger">Optional logger.</param>
+    public GenerationEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, string sessionKey, ILogger<GenerationEndpoint>? logger = null)
     {
-        Internal.HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        Internal.WebSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
-        Internal.SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
-        Internal.Logger = logger ?? NullLogger<GenerationEndpoint>.Instance;
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _webSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
+        _sessionKey = sessionKey ?? throw new ArgumentNullException(nameof(sessionKey));
+        _logger = logger ?? NullLogger<GenerationEndpoint>.Instance;
     }
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<GenerationUpdate> StreamGenerationAsync(GenerationRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<GenerationUpdate> StreamGenerationAsync(GenerationRequest request, CancellationToken cancellationToken = default)
     {
-        if (request is null)
-        {
-            throw new ArgumentNullException(nameof(request));
-        }
+        // Validate eagerly so failures throw at the call site, not at first enumeration.
+        ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Prompt))
         {
             throw new ArgumentException("Prompt is required for generation", nameof(request));
         }
-        if (request.BatchSize <= 0)
+        if (request.Images is < 1 or > 10000)
         {
-            throw new ArgumentException("BatchSize must be greater than 0 for parallel generation", nameof(request));
+            throw new ArgumentException("Images must be between 1 and 10000", nameof(request));
+        }
+        if (request.BatchSize is < 1 or > 100)
+        {
+            throw new ArgumentException("BatchSize must be between 1 and 100", nameof(request));
         }
         if (request.Width <= 0 || request.Height <= 0)
         {
             throw new ArgumentException("Width and Height must be positive values", nameof(request));
         }
-        Internal.Logger.LogInformation("Starting generation: prompt='{Prompt}' model='{Model}' size={Width}x{Height} steps={Steps} batchSize={BatchSize}", request.Prompt, request.Model ?? string.Empty, request.Width, request.Height, request.Steps, request.BatchSize);
         JObject payload = CreateGenerationPayload(request);
-        int expectedImages = request.BatchSize;
-        int receivedImages = 0;
-        await foreach (GenerationUpdate update in Internal.WebSocketClient.StreamMessagesAsync<GenerationUpdate>(
-            "GenerateText2ImageWS",
-            payload,
-            ParseGenerationMessage,
-            cancellationToken))
+        return StreamGenerationCoreAsync(payload, request, cancellationToken);
+    }
+
+    /// <summary>Streaming core: consumes raw frames and emits typed updates, ending with exactly one "complete" update.</summary>
+    private async IAsyncEnumerable<GenerationUpdate> StreamGenerationCoreAsync(JObject payload, GenerationRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting generation: model='{Model}' size={Width}x{Height} steps={Steps} images={Images} batchsize={BatchSize}", request.Model ?? string.Empty, request.Width, request.Height, request.Steps, request.Images, request.BatchSize);
+        int imagesReceived = 0;
+        List<int> discardedIndices = [];
+        List<ErrorInfo> errors = [];
+        bool sawSocketIntentionClose = false;
+        await foreach (JObject frame in _webSocketClient.StreamFramesAsync("GenerateText2ImageWS", payload, _sessionKey, cancellationToken).ConfigureAwait(false))
         {
-            if (update is null)
+            if (string.Equals(frame["socket_intention"]?.ToString(), "close", StringComparison.OrdinalIgnoreCase))
             {
-                continue;
+                sawSocketIntentionClose = true;
+                break;
             }
-            if (update.Type == "keep_alive")
+            // A single frame can carry multiple keys; emit one update per recognized key so nothing is dropped.
+            foreach (GenerationUpdate update in ParseFrame(frame))
             {
-                Internal.Logger.LogDebug("Received keep-alive message during generation");
-                continue;
-            }
-            if (update.Type == "image" && update.Image is not null)
-            {
-                receivedImages++;
-                Internal.Logger.LogDebug("Received image {Received}/{Expected} for batch_index {BatchIndex}", receivedImages, expectedImages, update.Image.BatchIndex);
-            }
-            Internal.Logger.LogDebug("Received generation update of type '{Type}'", update.Type ?? "unknown");
-            yield return update;
-            if (update.Type == "status" &&
-                update.Status is not null &&
-                update.Status.WaitingGens == 0 &&
-                update.Status.LiveGens == 0 &&
-                receivedImages >= expectedImages)
-            {
-                Internal.Logger.LogInformation("All {Expected} images received and no live/waiting generations remain. Completing stream.", expectedImages);
-                yield break;
+                switch (update.Type)
+                {
+                    case "image":
+                        imagesReceived++;
+                        break;
+                    case "discard" when update.DiscardIndices is not null:
+                        discardedIndices.AddRange(update.DiscardIndices);
+                        break;
+                    case "error" when update.Error is not null:
+                        errors.Add(update.Error);
+                        break;
+                }
+                yield return update;
             }
         }
-        if (!cancellationToken.IsCancellationRequested && receivedImages < expectedImages)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!sawSocketIntentionClose)
         {
-            Internal.Logger.LogWarning("Generation stream ended before all expected images were received. Expected={Expected} Received={Received}", expectedImages, receivedImages);
+            _logger.LogWarning("Generation stream for session key '{Key}' ended without a socket_intention close frame (server closed early)", _sessionKey);
+        }
+        bool succeeded = imagesReceived > 0 && errors.Count == 0;
+        _logger.LogInformation("Generation complete: succeeded={Succeeded} images={Images} discards={Discards} errors={Errors}", succeeded, imagesReceived, discardedIndices.Count, errors.Count);
+        yield return new GenerationUpdate
+        {
+            Type = "complete",
+            Completion = new CompletionInfo
+            {
+                Succeeded = succeeded,
+                ImagesReceived = imagesReceived,
+                DiscardedIndices = discardedIndices,
+                Errors = errors
+            }
+        };
+    }
+
+    /// <summary>Parses one raw server frame into zero or more typed updates. Frames may combine keys (e.g. an error alongside a status); all recognized keys are emitted.</summary>
+    private IEnumerable<GenerationUpdate> ParseFrame(JObject frame)
+    {
+        bool recognized = false;
+        if (frame["status"] is JObject statusObj)
+        {
+            recognized = true;
+            yield return new GenerationUpdate
+            {
+                Type = "status",
+                Status = statusObj.ToObject<StatusInfo>(),
+                BackendStatus = frame["backend_status"] is JObject backendObj ? backendObj.ToObject<BackendStatus>() : null,
+                SupportedFeatures = frame["supported_features"] is JArray featuresArr ? featuresArr.ToObject<List<string>>() : null
+            };
+        }
+        if (frame["gen_progress"] is JObject progressObj)
+        {
+            recognized = true;
+            yield return new GenerationUpdate
+            {
+                Type = "progress",
+                Progress = new ProgressInfo
+                {
+                    BatchIndex = progressObj["batch_index"]?.ToString() ?? string.Empty,
+                    OverallPercent = progressObj["overall_percent"]?.ToObject<float>() ?? 0.0f,
+                    CurrentPercent = progressObj["current_percent"]?.ToObject<float>() ?? 0.0f,
+                    Preview = progressObj["preview"]?.ToString()
+                }
+            };
+        }
+        if (frame["image"] is not null)
+        {
+            recognized = true;
+            yield return new GenerationUpdate
+            {
+                Type = "image",
+                Image = new ImageInfo
+                {
+                    Image = frame["image"]?.ToString() ?? string.Empty,
+                    BatchIndex = frame["batch_index"]?.ToString() ?? string.Empty,
+                    RequestId = frame["request_id"]?.ToString(),
+                    Metadata = frame["metadata"] is null or { Type: JTokenType.Null } ? null : frame["metadata"]!.ToString()
+                }
+            };
+        }
+        if (frame["discard_indices"] is JArray discardArray)
+        {
+            recognized = true;
+            yield return new GenerationUpdate
+            {
+                Type = "discard",
+                DiscardIndices = discardArray.ToObject<List<int>>()
+            };
+        }
+        if (frame["error"] is not null)
+        {
+            recognized = true;
+            yield return new GenerationUpdate
+            {
+                Type = "error",
+                Error = new ErrorInfo
+                {
+                    Message = frame["error"]!.Type == JTokenType.String ? frame["error"]!.ToString() : frame["error"]!.ToString(Formatting.None),
+                    ErrorId = frame["error_id"]?.ToString()
+                }
+            };
+        }
+        if (!recognized && _logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug("Ignoring unrecognized generation frame with keys: {Keys}", string.Join(",", frame.Properties().Select(p => p.Name)));
         }
     }
 
@@ -120,8 +203,7 @@ public class GenerationEndpoint : IGenerationEndpoint
         {
             ["do_debug"] = includeDebug
         };
-        ServerStatusResponse response = await Internal.HttpClient.PostJsonAsync<ServerStatusResponse>("GetCurrentStatus", payload, cancellationToken).ConfigureAwait(false);
-        return response;
+        return await _httpClient.PostJsonAsync<ServerStatusResponse>("GetCurrentStatus", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -131,14 +213,13 @@ public class GenerationEndpoint : IGenerationEndpoint
         {
             ["other_sessions"] = otherSessions
         };
-        JObject _ = await Internal.HttpClient.PostJsonAsync<JObject>("InterruptAll", payload, cancellationToken).ConfigureAwait(false);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("InterruptAll", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<T2IParamsResponse> ListT2IParamsAsync(CancellationToken cancellationToken = default)
     {
-        T2IParamsResponse response = await Internal.HttpClient.PostJsonAsync<T2IParamsResponse>("ListT2IParams", payload: null, cancellationToken).ConfigureAwait(false);
-        return response;
+        return await _httpClient.PostJsonAsync<T2IParamsResponse>("ListT2IParams", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -148,8 +229,7 @@ public class GenerationEndpoint : IGenerationEndpoint
         {
             ["strong"] = strong
         };
-        T2IParamsResponse response = await Internal.HttpClient.PostJsonAsync<T2IParamsResponse>("TriggerRefresh", payload, cancellationToken).ConfigureAwait(false);
-        return response;
+        return await _httpClient.PostJsonAsync<T2IParamsResponse>("TriggerRefresh", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -163,156 +243,32 @@ public class GenerationEndpoint : IGenerationEndpoint
         {
             ["message"] = message
         };
-        JObject _ = await Internal.HttpClient.PostJsonAsync<JObject>("ServerDebugMessage", payload, cancellationToken).ConfigureAwait(false);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("ServerDebugMessage", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Creates the JSON payload for SwarmUI's GenerateText2ImageWS WebSocket endpoint
-    /// from the high-level GenerationRequest model.</summary>
-    /// <param name="request">High-level generation request containing prompt, model, and parameters.</param>
-    /// <returns>JObject representing the payload expected by SwarmUI.</returns>
-    private JObject CreateGenerationPayload(GenerationRequest request)
+    /// <summary>Builds the GenerateText2ImageWS payload from the request's [JsonProperty] wire names, then applies the LoRA post-pass.</summary>
+    /// <remarks>LoRAs are sent as parallel JSON arrays (never comma-joined — LoRA names may legally contain commas) with full-precision weights. Internal so payload round-trip tests can verify every property reaches the wire.</remarks>
+    internal static JObject CreateGenerationPayload(GenerationRequest request)
     {
-        JObject payload = new()
+        JObject payload = JObject.FromObject(request, PayloadSerializer);
+        if (request.Loras is { Count: > 0 })
         {
-            ["images"] = request.BatchSize,
-            ["batchsize"] = 1,
-            ["prompt"] = request.Prompt,
-            ["model"] = request.Model ?? string.Empty,
-            ["width"] = request.Width,
-            ["height"] = request.Height,
-            ["steps"] = request.Steps,
-            ["cfgscale"] = request.CfgScale,
-            ["sampler"] = request.Sampler,
-            ["scheduler"] = request.Scheduler,
-            ["donotsave"] = request.DoNotSave,
-            ["imageformat"] = request.ImageFormat
-        };
-        if (!string.IsNullOrEmpty(request.NegativePrompt))
-        {
-            payload["negativeprompt"] = request.NegativePrompt;
-        }
-        if (!string.IsNullOrEmpty(request.Seed) && request.Seed != "-1")
-        {
-            payload["seed"] = request.Seed;
-        }
-        if (!string.IsNullOrEmpty(request.StylePreset))
-        {
-            payload["style_preset"] = request.StylePreset;
-        }
-        if (!string.IsNullOrEmpty(request.FluxGuidanceScale))
-        {
-            payload["fluxguidancescale"] = request.FluxGuidanceScale;
-        }
-        if (request.Loras is not null && request.Loras.Count > 0)
-        {
-            List<string> loraNames = new();
-            List<string> loraWeights = new();
+            List<string> loraNames = [];
+            List<string> loraWeights = [];
             foreach (LoraModel lora in request.Loras)
             {
                 if (lora is not null && !string.IsNullOrWhiteSpace(lora.Name))
                 {
                     loraNames.Add(lora.Name.Trim());
-                    loraWeights.Add(lora.Weight.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+                    loraWeights.Add(lora.Weight.ToString("0.####", CultureInfo.InvariantCulture));
                 }
             }
             if (loraNames.Count > 0)
             {
-                payload["loras"] = string.Join(",", loraNames);
-                payload["loraweights"] = string.Join(",", loraWeights);
+                payload["loras"] = new JArray(loraNames);
+                payload["loraweights"] = new JArray(loraWeights);
             }
         }
-        if (!string.IsNullOrEmpty(request.InitImage))
-        {
-            payload["initimage"] = request.InitImage;
-            payload["initimagecreativity"] = request.InitImageCreativity;
-        }
         return payload;
-    }
-
-    /// <summary>Parses a raw WebSocket JSON message from SwarmUI into a <see cref="GenerationUpdate"/>.</summary>
-    /// <param name="message">Raw JSON message as JObject.</param>
-    /// <returns>Parsed GenerationUpdate instance describing the update.</returns>
-    /// <remarks>Understands the main GenerateText2ImageWS message types (status, progress, image, discard, error, keep-alive). See T2IAPI.md and CodingGuidelines.md (Generation endpoint section) for full schema and parsing notes.</remarks>
-    private GenerationUpdate ParseGenerationMessage(JObject message)
-    {
-        if (message is null)
-        {
-            throw new ArgumentNullException(nameof(message));
-        }
-        if (message["keep_alive"] is not null)
-        {
-            return new GenerationUpdate
-            {
-                Type = "keep_alive",
-                KeepAlive = message["keep_alive"]
-            };
-        }
-        if (message["status"] is not null)
-        {
-            GenerationUpdate statusUpdate = new()
-            {
-                Type = "status",
-                Status = message["status"] is not null ? message["status"]!.ToObject<StatusInfo>() : null,
-                BackendStatus = message["backend_status"] is not null ? message["backend_status"]!.ToObject<BackendStatus>() : null,
-                SupportedFeatures = message["supported_features"] is not null ? message["supported_features"]!.ToObject<List<string>>() : null
-            };
-            return statusUpdate;
-        }
-        if (message["gen_progress"] is JObject progressObject)
-        {
-            ProgressInfo progress = new()
-            {
-                BatchIndex = progressObject["batch_index"] is not null ? progressObject["batch_index"]!.ToString() ?? string.Empty : string.Empty,
-                OverallPercent = progressObject["overall_percent"] is not null ? progressObject["overall_percent"]!.ToObject<float>() : 0.0f,
-                CurrentPercent = progressObject["current_percent"] is not null ? progressObject["current_percent"]!.ToObject<float>() : 0.0f,
-                Preview = progressObject["preview"] is not null ? progressObject["preview"]!.ToString() : null
-            };
-            GenerationUpdate progressUpdate = new()
-            {
-                Type = "progress",
-                Progress = progress
-            };
-            return progressUpdate;
-        }
-        if (message["image"] is not null)
-        {
-            ImageInfo imageInfo = new()
-            {
-                Image = message["image"] is not null ? message["image"]!.ToString() ?? string.Empty : string.Empty,
-                BatchIndex = message["batch_index"] is not null ? message["batch_index"]!.ToString() ?? string.Empty : string.Empty,
-                Metadata = message["metadata"] is not null ? message["metadata"]!.ToString() ?? string.Empty : string.Empty
-            };
-            GenerationUpdate imageUpdate = new()
-            {
-                Type = "image",
-                Image = imageInfo
-            };
-            return imageUpdate;
-        }
-        if (message["discard_indices"] is JArray discardArray)
-        {
-            List<int>? indices = discardArray.ToObject<List<int>>();
-            GenerationUpdate discardUpdate = new()
-            {
-                Type = "discard",
-                DiscardIndices = indices
-            };
-            return discardUpdate;
-        }
-        if (message["error"] is not null)
-        {
-            string errorMessage = message["error"] is not null ? message["error"]!.ToString() ?? string.Empty : string.Empty;
-            GenerationUpdate errorUpdate = new()
-            {
-                Type = "error",
-                Error = new ErrorInfo
-                {
-                    Message = errorMessage
-                }
-            };
-            return errorUpdate;
-        }
-        Internal.Logger.LogDebug("Received unknown/unhandled generation message format, skipping: {Message}", message.ToString());
-        return null!;
     }
 }

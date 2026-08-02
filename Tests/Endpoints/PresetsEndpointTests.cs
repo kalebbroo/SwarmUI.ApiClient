@@ -1,10 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Contracts.Requests;
 using SwarmUI.ApiClient.Endpoints.Presets;
-using SwarmUI.ApiClient.Http;
+using SwarmUI.ApiClient.Exceptions;
 using SwarmUI.ApiClient.Sessions;
 using Xunit;
 
@@ -13,68 +14,16 @@ namespace SwarmUI.ApiClient.Tests.Endpoints
     /// <summary>Unit tests for <see cref="PresetsEndpoint"/> verifying payload shaping and error handling.</summary>
     public class PresetsEndpointTests
     {
-        /// <summary>Test HTTP client that records the last endpoint and payload and returns a configurable JObject.</summary>
-        private sealed class RecordingHttpClient : ISwarmHttpClient
-        {
-            public string? LastEndpoint { get; private set; }
-            public JObject? LastPayload { get; private set; }
-            public JObject ResponseToReturn { get; set; } = new JObject();
-
-            public Task<TResponse> PostJsonAsync<TResponse>(string endpoint, object? payload = null, CancellationToken cancellationToken = default) where TResponse : class
-            {
-                LastEndpoint = endpoint;
-                LastPayload = payload as JObject ?? (payload is not null ? JObject.FromObject(payload) : new JObject());
-                if (typeof(TResponse) == typeof(JObject))
-                {
-                    return Task.FromResult((TResponse)(object)ResponseToReturn);
-                }
-                throw new NotSupportedException("RecordingHttpClient only supports JObject responses.");
-            }
-
-            public Task<TResponse> PostJsonAsync<TRequest, TResponse>(string endpoint, TRequest request, CancellationToken cancellationToken = default) where TRequest : class where TResponse : class
-            {
-                LastEndpoint = endpoint;
-                LastPayload = JObject.FromObject(request);
-                if (typeof(TResponse) == typeof(JObject))
-                {
-                    return Task.FromResult((TResponse)(object)ResponseToReturn);
-                }
-                throw new NotSupportedException("RecordingHttpClient only supports JObject responses.");
-            }
-        }
-
-        /// <summary>Test implementation of <see cref="ISessionManager"/> that returns fixed session IDs.</summary>
-        private sealed class DummySessionManager : ISessionManager
-        {
-            public Task<string> GetOrCreateSessionAsync(CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult("session-1");
-            }
-
-            public Task<string> RefreshSessionAsync(CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult("session-2");
-            }
-
-            public void InvalidateSession()
-            {
-            }
-
-            public string? CurrentSessionId => "session-1";
-        }
-
         [Fact]
         public async Task AddNewPresetAsync_MapsRequestToExpectedPayload()
         {
-            RecordingHttpClient httpClient = new RecordingHttpClient();
-            DummySessionManager sessionManager = new DummySessionManager();
-            PresetsEndpoint endpoint = new PresetsEndpoint(httpClient, sessionManager, logger: null);
-
-            PresetRequest request = new PresetRequest
+            FakeSwarmHttpClient http = new();
+            PresetsEndpoint endpoint = new(http, SwarmSessionKeys.Default);
+            PresetRequest request = new()
             {
                 Title = "My Preset",
                 Description = "Desc",
-                Parameters = new System.Collections.Generic.Dictionary<string, object>
+                Parameters = new Dictionary<string, object>
                 {
                     { "model", "flux" },
                     { "steps", 20 }
@@ -83,18 +32,15 @@ namespace SwarmUI.ApiClient.Tests.Endpoints
                 IsEdit = true,
                 EditingName = "Old Preset"
             };
-
-            await endpoint.AddNewPresetAsync(request, CancellationToken.None).ConfigureAwait(false);
-
-            Assert.Equal("AddNewPreset", httpClient.LastEndpoint);
-            Assert.NotNull(httpClient.LastPayload);
-            Assert.Equal("My Preset", httpClient.LastPayload!["title"]?.ToString());
-            Assert.Equal("Desc", httpClient.LastPayload!["description"]?.ToString());
-            Assert.Equal("base64data", httpClient.LastPayload!["preview_image"]?.ToString());
-            Assert.True(httpClient.LastPayload!["is_edit"]?.ToObject<bool>() ?? false);
-            Assert.Equal("Old Preset", httpClient.LastPayload!["editing"]?.ToString());
-
-            JObject? raw = httpClient.LastPayload!["raw"] as JObject;
+            await endpoint.AddNewPresetAsync(request);
+            (string ep, JObject? payload, _) = Assert.Single(http.Requests);
+            Assert.Equal("AddNewPreset", ep);
+            Assert.Equal("My Preset", payload!["title"]?.ToString());
+            Assert.Equal("Desc", payload["description"]?.ToString());
+            Assert.Equal("base64data", payload["preview_image"]?.ToString());
+            Assert.True(payload["is_edit"]?.ToObject<bool>() ?? false);
+            Assert.Equal("Old Preset", payload["editing"]?.ToString());
+            JObject? raw = payload["raw"] as JObject;
             Assert.NotNull(raw);
             JObject? paramMap = raw!["param_map"] as JObject;
             Assert.NotNull(paramMap);
@@ -102,26 +48,20 @@ namespace SwarmUI.ApiClient.Tests.Endpoints
         }
 
         [Fact]
-        public async Task AddNewPresetAsync_ThrowsWhenServerReturnsPresetFail()
+        public async Task AddNewPresetAsync_ThrowsSwarmExceptionWhenServerReturnsPresetFail()
         {
-            RecordingHttpClient httpClient = new RecordingHttpClient();
-            httpClient.ResponseToReturn = new JObject
+            FakeSwarmHttpClient http = new()
             {
-                ["preset_fail"] = "Name already exists"
+                Handler = (_, _, _) => new JObject { ["preset_fail"] = "Name already exists" }
             };
-            DummySessionManager sessionManager = new DummySessionManager();
-            PresetsEndpoint endpoint = new PresetsEndpoint(httpClient, sessionManager, logger: null);
-
-            PresetRequest request = new PresetRequest
+            PresetsEndpoint endpoint = new(http, SwarmSessionKeys.Default);
+            PresetRequest request = new()
             {
                 Title = "My Preset",
-                Parameters = new System.Collections.Generic.Dictionary<string, object>()
+                Parameters = []
             };
-
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            {
-                await endpoint.AddNewPresetAsync(request, CancellationToken.None).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+            SwarmException ex = await Assert.ThrowsAsync<SwarmException>(() => endpoint.AddNewPresetAsync(request));
+            Assert.Equal("preset_fail", ex.ErrorId);
         }
     }
 }

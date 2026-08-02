@@ -10,56 +10,39 @@ using SwarmUI.ApiClient.Contracts.Common;
 using SwarmUI.ApiClient.Contracts.Enums;
 using SwarmUI.ApiClient.Contracts.Requests;
 using SwarmUI.ApiClient.Contracts.Responses;
+using SwarmUI.ApiClient.Exceptions;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Sessions;
 using SwarmUI.ApiClient.WebSockets;
 
 namespace SwarmUI.ApiClient.Endpoints.Models;
 
 /// <summary>Provides access to SwarmUI model management endpoints.</summary>
-/// <remarks>Follows the shared endpoint patterns for HTTP and WebSocket operations described in CodingGuidelines.md.</remarks>
 public class ModelsEndpoint : IModelsEndpoint
 {
-    /// <summary>Internal implementation data containing dependencies for the Models endpoint.</summary>
-    public struct Impl
+    private readonly ISwarmHttpClient _httpClient;
+    private readonly ISwarmWebSocketClient _webSocketClient;
+    private readonly string _sessionKey;
+    private readonly ILogger<ModelsEndpoint> _logger;
+
+    /// <summary>Creates a new ModelsEndpoint.</summary>
+    /// <param name="httpClient">HTTP client wrapper for model HTTP operations.</param>
+    /// <param name="webSocketClient">WebSocket client for streaming model operations.</param>
+    /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
+    /// <param name="logger">Optional logger.</param>
+    public ModelsEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, string sessionKey, ILogger<ModelsEndpoint>? logger = null)
     {
-        /// <summary>HTTP client wrapper used for all model-related HTTP operations.</summary>
-        public ISwarmHttpClient HttpClient;
-
-        /// <summary>WebSocket client used for model-related streaming operations.</summary>
-        public ISwarmWebSocketClient WebSocketClient;
-
-        /// <summary>Session manager responsible for obtaining and refreshing session IDs.</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>Logger for model management operations.</summary>
-        public ILogger<ModelsEndpoint> Logger;
-    }
-
-    /// <summary>Internal implementation data for advanced scenarios; normal usage should use the public methods.</summary>
-    public Impl Internal;
-
-    /// <summary>Creates a new ModelsEndpoint instance with the specified dependencies.</summary>
-    /// <param name="httpClient">HTTP client wrapper for model HTTP operations. Must not be null.</param>
-    /// <param name="webSocketClient">WebSocket client for streaming model operations. Must not be null.</param>
-    /// <param name="sessionManager">Session manager used indirectly for session injection. Must not be null.</param>
-    /// <param name="logger">Optional logger for operations. Uses NullLogger if null.</param>
-    /// <remarks>Relies on injected HTTP, WebSocket, and session services managed by SwarmClient. See CodingGuidelines.md (Models endpoint section) for DI and testing guidance.</remarks>
-    public ModelsEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, ISessionManager sessionManager, ILogger<ModelsEndpoint>? logger = null)
-    {
-        Internal.HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        Internal.WebSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
-        Internal.SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
-        Internal.Logger = logger ?? NullLogger<ModelsEndpoint>.Instance;
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _webSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
+        _sessionKey = sessionKey ?? throw new ArgumentNullException(nameof(sessionKey));
+        _logger = logger ?? NullLogger<ModelsEndpoint>.Instance;
     }
 
     /// <inheritdoc />
     public async Task<ModelListResponse> ListModelsAsync(string modelType = "Stable-Diffusion", string path = "", int depth = 4, string sortBy = "Name",
         bool allowRemote = true, bool sortReverse = false, CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing models of type '{ModelType}' at path '{Path}' with depth={Depth}, sortBy={SortBy}, allowRemote={AllowRemote}, sortReverse={SortReverse}",
-            modelType, path, depth, sortBy, allowRemote, sortReverse);
-        ModelListResponse response = await Internal.HttpClient.PostJsonAsync<ModelListResponse>("ListModels",
+        _logger.LogDebug("Listing models of type '{ModelType}' at path '{Path}' with depth={Depth}", modelType, path, depth);
+        ModelListResponse response = await _httpClient.PostJsonAsync<ModelListResponse>("ListModels",
             new
             {
                 path,
@@ -69,11 +52,9 @@ public class ModelsEndpoint : IModelsEndpoint
                 allowRemote,
                 sortReverse
             },
-            cancellationToken).ConfigureAwait(false);
-        int folderCount = response.Folders is not null ? response.Folders.Count : 0;
-        int fileCount = response.Files is not null ? response.Files.Count : 0;
-        Internal.Logger.LogInformation("Retrieved {FolderCount} folders and {FileCount} models for type '{ModelType}' at path '{Path}'",
-            folderCount, fileCount, modelType, path);
+            _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {FolderCount} folders and {FileCount} models for type '{ModelType}' at path '{Path}'",
+            response.Folders?.Count ?? 0, response.Files?.Count ?? 0, modelType, path);
         return response;
     }
 
@@ -84,35 +65,22 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Model name cannot be null or empty", nameof(modelName));
         }
-        Internal.Logger.LogDebug("Describing model '{ModelName}' of type '{ModelType}'", modelName, modelType);
-        JObject response = await Internal.HttpClient.PostJsonAsync<JObject>("DescribeModel",
+        _logger.LogDebug("Describing model '{ModelName}' of type '{ModelType}'", modelName, modelType);
+        JObject response = await _httpClient.PostJsonAsync<JObject>("DescribeModel",
             new
             {
                 modelName,
                 subtype = modelType
             },
-            cancellationToken).ConfigureAwait(false);
-        ModelDescription? description = null;
-        if (response is not null)
+            _sessionKey, cancellationToken).ConfigureAwait(false);
+        JToken? modelToken = response["model"];
+        ModelDescription? description = modelToken is { Type: not JTokenType.Null }
+            ? modelToken.ToObject<ModelDescription>()
+            : response.ToObject<ModelDescription>();
+        if (description is null || string.IsNullOrEmpty(description.Name))
         {
-            JToken? modelToken = response["model"];
-            if (modelToken is not null && modelToken.Type != JTokenType.Null)
-            {
-                description = modelToken.ToObject<ModelDescription>();
-            }
-            else
-            {
-                description = response.ToObject<ModelDescription>();
-            }
-        }
-        if (description is null)
-        {
-            ModelDescription fallback = new()
-            {
-                Name = modelName,
-                Description = "No description available"
-            };
-            return fallback;
+            // No fabricated fallback: an unusable response is an error, not a fake success.
+            throw new SwarmException($"DescribeModel returned no usable description for model '{modelName}'", "no_result");
         }
         return description;
     }
@@ -124,14 +92,14 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Model name cannot be null or empty", nameof(modelName));
         }
-        Internal.Logger.LogDebug("Deleting model '{ModelName}' of type '{ModelType}'", modelName, modelType);
-        JObject _ = await Internal.HttpClient.PostJsonAsync<JObject>("DeleteModel",
+        _logger.LogDebug("Deleting model '{ModelName}' of type '{ModelType}'", modelName, modelType);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("DeleteModel",
             new
             {
                 modelName,
                 subtype = modelType
             },
-            cancellationToken).ConfigureAwait(false);
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -141,13 +109,13 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Wildcard card name cannot be null or empty", nameof(card));
         }
-        Internal.Logger.LogDebug("Deleting wildcard card '{Card}'", card);
-        JObject _ = await Internal.HttpClient.PostJsonAsync<JObject>("DeleteWildcard",
+        _logger.LogDebug("Deleting wildcard card '{Card}'", card);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("DeleteWildcard",
             new
             {
                 card
             },
-            cancellationToken).ConfigureAwait(false);
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -157,31 +125,30 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Model name cannot be null or empty", nameof(modelName));
         }
-        Internal.Logger.LogDebug("Getting model hash for '{ModelName}' of type '{ModelType}'", modelName, modelType);
-        ModelHashResponse response = await Internal.HttpClient.PostJsonAsync<ModelHashResponse>("GetModelHash",
+        _logger.LogDebug("Getting model hash for '{ModelName}' of type '{ModelType}'", modelName, modelType);
+        return await _httpClient.PostJsonAsync<ModelHashResponse>("GetModelHash",
             new
             {
                 modelName,
                 subtype = modelType
             },
-            cancellationToken).ConfigureAwait(false);
-        return response;
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task EditModelMetadataAsync(EditModelMetadataRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        Internal.Logger.LogDebug("Editing metadata for model '{Model}' of type '{Subtype}'", request.Model, request.Subtype);
-        JObject _ = await Internal.HttpClient.PostJsonAsync<EditModelMetadataRequest, JObject>("EditModelMetadata", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Editing metadata for model '{Model}' of type '{Subtype}'", request.Model, request.Subtype);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("EditModelMetadata", JObject.FromObject(request), _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task EditWildcardAsync(EditWildcardRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        Internal.Logger.LogDebug("Editing wildcard card '{Card}'", request.Card);
-        JObject _ = await Internal.HttpClient.PostJsonAsync<EditWildcardRequest, JObject>("EditWildcard", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Editing wildcard card '{Card}'", request.Card);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("EditWildcard", JObject.FromObject(request), _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -191,22 +158,20 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("URL cannot be null or empty", nameof(url));
         }
-        Internal.Logger.LogDebug("Forwarding metadata request to URL '{Url}'", url);
-        JObject response = await Internal.HttpClient.PostJsonAsync<JObject>("ForwardMetadataRequest",
+        _logger.LogDebug("Forwarding metadata request to URL '{Url}'", url);
+        return await _httpClient.PostJsonAsync<JObject>("ForwardMetadataRequest",
             new
             {
                 url
             },
-            cancellationToken).ConfigureAwait(false);
-        return response;
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<LoadedModelsResponse> ListLoadedModelsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing currently loaded models");
-        LoadedModelsResponse response = await Internal.HttpClient.PostJsonAsync<LoadedModelsResponse>("ListLoadedModels", payload: null, cancellationToken).ConfigureAwait(false);
-        return response;
+        _logger.LogDebug("Listing currently loaded models");
+        return await _httpClient.PostJsonAsync<LoadedModelsResponse>("ListLoadedModels", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -220,15 +185,15 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("New model name cannot be null or empty", nameof(newName));
         }
-        Internal.Logger.LogDebug("Renaming model from '{OldName}' to '{NewName}' (type '{ModelType}')", oldName, newName, modelType);
-        JObject _ = await Internal.HttpClient.PostJsonAsync<JObject>("RenameModel",
+        _logger.LogDebug("Renaming model from '{OldName}' to '{NewName}' (type '{ModelType}')", oldName, newName, modelType);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("RenameModel",
             new
             {
                 oldName,
                 newName,
                 subtype = modelType
             },
-            cancellationToken).ConfigureAwait(false);
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -238,20 +203,21 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Model cannot be null or empty", nameof(model));
         }
-        Internal.Logger.LogDebug("Selecting model '{Model}' on backend '{BackendId}' (null means all backends)", model, backendId ?? string.Empty);
-        JObject _ = await Internal.HttpClient.PostJsonAsync<JObject>("SelectModel",
+        _logger.LogDebug("Selecting model '{Model}' on backend '{BackendId}' (null means all backends)", model, backendId ?? string.Empty);
+        JObject _ = await _httpClient.PostJsonAsync<JObject>("SelectModel",
             new
             {
                 model,
                 backendId
             },
-            cancellationToken).ConfigureAwait(false);
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<ModelOperationUpdate> StreamModelDownloadAsync(string url, string modelType, string name, string? metadata = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<ModelOperationUpdate> StreamModelDownloadAsync(string url, string modelType, string name, string? metadata = null,
+        CancellationToken cancellationToken = default)
     {
+        // Validate eagerly so failures throw at the call site, not at first enumeration.
         if (string.IsNullOrWhiteSpace(url))
         {
             throw new ArgumentException("URL cannot be null or empty", nameof(url));
@@ -264,7 +230,7 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Model filename cannot be null or empty", nameof(name));
         }
-        Internal.Logger.LogInformation("Starting model download from '{Url}' as '{Name}' of type '{ModelType}'", url, name, modelType);
+        _logger.LogInformation("Starting model download from '{Url}' as '{Name}' of type '{ModelType}'", url, name, modelType);
         JObject payload = new()
         {
             ["url"] = url,
@@ -275,14 +241,7 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             payload["metadata"] = metadata;
         }
-        await foreach (ModelOperationUpdate update in Internal.WebSocketClient.StreamMessagesAsync<ModelOperationUpdate>("DoModelDownloadWS", payload,
-            ParseModelOperationMessage, cancellationToken))
-        {
-            if (update is not null)
-            {
-                yield return update;
-            }
-        }
+        return StreamModelOperationCoreAsync("DoModelDownloadWS", payload, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -291,20 +250,26 @@ public class ModelsEndpoint : IModelsEndpoint
         => StreamModelDownloadAsync(url, subType.AsApiType(), name, metadata, cancellationToken);
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<ModelOperationUpdate> StreamModelSelectionAsync(string model, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<ModelOperationUpdate> StreamModelSelectionAsync(string model, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(model))
         {
             throw new ArgumentException("Model cannot be null or empty", nameof(model));
         }
-        Internal.Logger.LogInformation("Starting model selection stream for model '{Model}'", model);
+        _logger.LogInformation("Starting model selection stream for model '{Model}'", model);
         JObject payload = new()
         {
             ["model"] = model
         };
-        await foreach (ModelOperationUpdate update in Internal.WebSocketClient.StreamMessagesAsync<ModelOperationUpdate>("SelectModelWS",
-            payload, ParseModelOperationMessage, cancellationToken))
+        return StreamModelOperationCoreAsync("SelectModelWS", payload, cancellationToken);
+    }
+
+    /// <summary>Shared streaming core for model operation endpoints.</summary>
+    private async IAsyncEnumerable<ModelOperationUpdate> StreamModelOperationCoreAsync(string endpoint, JObject payload, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (JObject frame in _webSocketClient.StreamFramesAsync(endpoint, payload, _sessionKey, cancellationToken).ConfigureAwait(false))
         {
+            ModelOperationUpdate? update = frame.ToObject<ModelOperationUpdate>();
             if (update is not null)
             {
                 yield return update;
@@ -319,24 +284,12 @@ public class ModelsEndpoint : IModelsEndpoint
         {
             throw new ArgumentException("Prompt cannot be null or empty", nameof(prompt));
         }
-        Internal.Logger.LogDebug("Testing prompt fill for prompt of length {Length}", prompt.Length);
-        TestPromptFillResponse response = await Internal.HttpClient.PostJsonAsync<TestPromptFillResponse>("TestPromptFill",
+        _logger.LogDebug("Testing prompt fill for prompt of length {Length}", prompt.Length);
+        return await _httpClient.PostJsonAsync<TestPromptFillResponse>("TestPromptFill",
             new
             {
                 prompt
             },
-            cancellationToken).ConfigureAwait(false);
-        return response;
-    }
-
-    public ModelOperationUpdate ParseModelOperationMessage(JObject message)
-    {
-        if (message is null)
-        {
-            return new ModelOperationUpdate();
-        }
-        ModelOperationUpdate? update = message.ToObject<ModelOperationUpdate>();
-        update ??= new ModelOperationUpdate();
-        return update;
+            _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 }

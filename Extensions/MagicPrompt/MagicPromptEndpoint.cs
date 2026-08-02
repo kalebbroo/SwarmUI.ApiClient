@@ -3,9 +3,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Extensions.MagicPrompt.Contracts;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Sessions;
 
 namespace SwarmUI.ApiClient.Extensions.MagicPrompt;
 
@@ -22,34 +22,22 @@ public class MagicPromptEndpoint : IMagicPromptEndpoint
         Endpoints = new string[] { "MagicPromptPhoneHome" }
     };
 
-    /// <summary>Internal implementation data containing dependencies.</summary>
-    public struct Impl
-    {
-        /// <summary>HTTP client for making API requests with automatic session injection.</summary>
-        public ISwarmHttpClient HttpClient;
-
-        /// <summary>Session manager for obtaining session IDs (used indirectly via HttpClient).</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>Logger for endpoint operations.</summary>
-        public ILogger<MagicPromptEndpoint> Logger;
-    }
-
-    /// <summary>Internal implementation data for advanced scenarios; normal usage should use the public members.</summary>
-    public Impl Internal;
+    private readonly ISwarmHttpClient _httpClient;
+    private readonly string _sessionKey;
+    private readonly ILogger<MagicPromptEndpoint> _logger;
 
     /// <inheritdoc />
     public SwarmExtensionInfo Extension => ExtensionInfo;
 
-    /// <summary>Creates a new MagicPromptEndpoint instance with the specified dependencies.</summary>
-    /// <param name="httpClient">HTTP client for API requests. Must not be null.</param>
-    /// <param name="sessionManager">Session manager for session lifecycle. Must not be null.</param>
-    /// <param name="logger">Optional logger for operations. Uses NullLogger if null.</param>
-    public MagicPromptEndpoint(ISwarmHttpClient httpClient, ISessionManager sessionManager, ILogger<MagicPromptEndpoint>? logger = null)
+    /// <summary>Creates a new MagicPromptEndpoint.</summary>
+    /// <param name="httpClient">HTTP client for API requests.</param>
+    /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
+    /// <param name="logger">Optional logger.</param>
+    public MagicPromptEndpoint(ISwarmHttpClient httpClient, string sessionKey, ILogger<MagicPromptEndpoint>? logger = null)
     {
-        Internal.HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        Internal.SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
-        Internal.Logger = logger ?? NullLogger<MagicPromptEndpoint>.Instance;
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _sessionKey = sessionKey ?? throw new ArgumentNullException(nameof(sessionKey));
+        _logger = logger ?? NullLogger<MagicPromptEndpoint>.Instance;
     }
 
     /// <inheritdoc />
@@ -61,15 +49,15 @@ public class MagicPromptEndpoint : IMagicPromptEndpoint
             throw new ArgumentException("Text content cannot be empty", nameof(request));
         }
         string modelIdLog = string.IsNullOrWhiteSpace(request.ModelId) ? "(using server default)" : request.ModelId;
-        Internal.Logger.LogDebug("Enhancing prompt with MagicPrompt using model: {ModelId}", modelIdLog);
-        MagicPromptResponse response = await Internal.HttpClient.PostJsonAsync<MagicPromptRequest, MagicPromptResponse>("MagicPromptPhoneHome", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Enhancing prompt with MagicPrompt using model: {ModelId}", modelIdLog);
+        MagicPromptResponse response = await _httpClient.PostJsonAsync<MagicPromptResponse>("MagicPromptPhoneHome", JObject.FromObject(request), _sessionKey, cancellationToken).ConfigureAwait(false);
         if (!response.Success)
         {
-            Internal.Logger.LogWarning("MagicPrompt enhancement failed: {Error}", response.Error ?? "Unknown error");
+            _logger.LogWarning("MagicPrompt enhancement failed: {Error}", response.Error ?? "Unknown error");
         }
         else
         {
-            Internal.Logger.LogInformation("Successfully enhanced prompt (original: {OriginalLength} chars → enhanced: {EnhancedLength} chars)",
+            _logger.LogInformation("Successfully enhanced prompt (original: {OriginalLength} chars → enhanced: {EnhancedLength} chars)",
                 request.Content.Text.Length,
                 response.Response?.Length ?? 0);
         }
