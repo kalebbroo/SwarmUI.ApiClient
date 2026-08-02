@@ -106,7 +106,7 @@ namespace SwarmUI.ApiClient.Tests.IntegrationTests
                 Height = 512,
                 Steps = 4, // Minimal steps for fast testing
                 BatchSize = 1,
-                Seed = "12345"
+                Seed = 12345
             };
 
             List<GenerationUpdate> updates = new List<GenerationUpdate>();
@@ -152,7 +152,7 @@ namespace SwarmUI.ApiClient.Tests.IntegrationTests
                 Height = 512,
                 Steps = 4, // Minimal steps for fast testing
                 BatchSize = 2, // Generate 2 images in parallel
-                Seed = "54321"
+                Seed = 54321
             };
 
             List<GenerationUpdate> updates = new List<GenerationUpdate>();

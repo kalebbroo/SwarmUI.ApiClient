@@ -1,11 +1,12 @@
 using System;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Contracts.Responses;
 using SwarmUI.ApiClient.Endpoints.Admin;
 using SwarmUI.ApiClient.Endpoints.Backends;
@@ -20,126 +21,118 @@ using SwarmUI.ApiClient.WebSockets;
 
 namespace SwarmUI.ApiClient;
 
-/// <summary>Primary implementation of the SwarmUI API client, exposing organized endpoint groups and managing HTTP, WebSocket, and session infrastructure.</summary>
-/// <remarks>The client is thread-safe for concurrent API requests and should be disposed when no longer needed. For usage patterns and implementation details, see the library documentation.</remarks>
+/// <summary>Primary implementation of the SwarmUI API client.</summary>
+/// <remarks>Intended lifetime is one instance per SwarmUI server for the life of the process (register as a singleton in DI). Sessions are pooled per key and refresh transparently when the server rejects them, so a SwarmUI restart never requires restarting the consuming application. Thread-safe for concurrent use.</remarks>
 public class SwarmClient : ISwarmClient
 {
-    /// <summary>Internal implementation data containing dependencies and infrastructure components using the Impl struct pattern.</summary>
-    public struct Impl
-    {
-        /// <summary>HTTP client for making API requests. May be owned by this instance or injected via DI.</summary>
-        public HttpClient HttpClient;
+    private readonly SwarmClientOptions _options;
+    private readonly ILogger<SwarmClient> _logger;
+    private readonly ILoggerFactory? _loggerFactory;
+    private readonly Func<HttpClient> _httpClientProvider;
+    private readonly HttpClient? _ownedHttpClient;
+    private readonly SessionManager _sessionManager;
+    private readonly SwarmHttpClient _swarmHttpClient;
+    private readonly SwarmWebSocketClient _webSocketClient;
+    private int _disposed;
 
-        /// <summary>Indicates whether this instance owns the HttpClient and should dispose it.</summary>
-        public bool DisposeHttpClient;
-
-        /// <summary>Logger for client-level operations and health checks.</summary>
-        public ILogger<SwarmClient> Logger;
-
-        /// <summary>Session manager handling session lifecycle and caching across all endpoints.</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>HTTP communication layer wrapping HttpClient with SwarmUI-specific logic.</summary>
-        public ISwarmHttpClient SwarmHttpClient;
-
-        /// <summary>WebSocket communication layer for streaming operations.</summary>
-        public ISwarmWebSocketClient WebSocketClient;
-    }
-
-    /// <summary>Internal implementation data. Do not use directly unless absolutely necessary.</summary>
-    public Impl Internal;
-
-    /// <summary>Access to text-to-image generation endpoints for streaming, status, and control operations.</summary>
+    /// <summary>Access to text-to-image generation endpoints (default session).</summary>
     public IGenerationEndpoint Generation { get; }
 
-    /// <summary>Access to model management endpoints for listing, editing, and managing models, LoRAs, and wildcards.</summary>
+    /// <summary>Access to model management endpoints (default session).</summary>
     public IModelsEndpoint Models { get; }
 
-    /// <summary>Access to backend server management endpoints for listing, toggling, and restarting GPU backends.</summary>
+    /// <summary>Access to backend server management endpoints (default session).</summary>
     public IBackendsEndpoint Backends { get; }
 
-    /// <summary>Access to preset management endpoints for creating, editing, duplicating, and deleting presets.</summary>
+    /// <summary>Access to preset management endpoints (default session).</summary>
     public IPresetsEndpoint Presets { get; }
 
-    /// <summary>Access to user data and settings endpoints for settings, API keys, and user-specific data.</summary>
+    /// <summary>Access to user data and settings endpoints (default session).</summary>
     public IUserEndpoint User { get; }
 
-    /// <summary>Access to administrative endpoints for user management, roles, server operations, and system administration.</summary>
+    /// <summary>Access to administrative endpoints (default session).</summary>
     public IAdminEndpoint Admin { get; }
 
-    /// <summary>Access to endpoints added by SwarmUI server extensions, grouped one property per extension.</summary>
-    /// <remarks>Nothing under this property is part of stock SwarmUI; each extension must be installed on the target server.</remarks>
+    /// <summary>Access to endpoints added by SwarmUI server extensions (default session).</summary>
     public ISwarmExtensions Extensions { get; }
 
-    /// <summary>Creates a new SwarmClient for standalone usage where the client owns its HttpClient instance.</summary>
-    /// <param name="options">Configuration options for the client. Must not be null.</param>
-    /// <param name="logger">Optional logger for client operations. Uses NullLogger if null.</param>
-    /// <remarks>Creates and configures an internal HttpClient using SwarmClientOptions for simple, non-DI scenarios. See the README for usage examples.</remarks>
-    public SwarmClient(SwarmClientOptions options, ILogger<SwarmClient>? logger = null) : this(CreateConfiguredHttpClient(options), options, logger, disposeHttpClient: true)
+    /// <inheritdoc />
+    public ISessionManager Sessions => _sessionManager;
+
+    /// <summary>Creates a standalone SwarmClient that owns its HTTP resources.</summary>
+    /// <param name="options">Configuration options. Must not be null.</param>
+    /// <param name="loggerFactory">Optional logger factory for client and endpoint loggers.</param>
+    /// <remarks>The owned connection handler uses a pooled connection lifetime so DNS changes are picked up — safe to hold as a process-lifetime singleton.</remarks>
+    public SwarmClient(SwarmClientOptions options, ILoggerFactory? loggerFactory = null)
+        : this(options, httpClientProvider: null, loggerFactory)
     {
     }
 
-    /// <summary>Creates a new SwarmClient using an injected HttpClient from dependency injection.</summary>
-    /// <param name="httpClient">HTTP client injected from DI container. Should be configured by IHttpClientFactory.
-    /// Must not be null.</param>
-    /// <param name="options">Configuration options for the client. Must not be null.</param>
-    /// <param name="logger">Optional logger for client operations. Uses NullLogger if null.</param>
-    /// <remarks>Designed for DI scenarios where HttpClient is managed by IHttpClientFactory and the DI container. The client configures the injected HttpClient with SwarmUI-specific settings but does not dispose it. See the README and CodingGuidelines.md for registration patterns.</remarks>
-    public SwarmClient(HttpClient httpClient, SwarmClientOptions options, ILogger<SwarmClient>? logger = null) : this(httpClient, options, logger, disposeHttpClient: false)
+    /// <summary>Creates a SwarmClient over an externally managed HttpClient supply (DI hosts).</summary>
+    /// <param name="options">Configuration options. Must not be null.</param>
+    /// <param name="httpClientProvider">Called per request to obtain an HttpClient; wire this to IHttpClientFactory.CreateClient so handler rotation works. When null, the client creates and owns its own HttpClient.</param>
+    /// <param name="loggerFactory">Optional logger factory for client and endpoint loggers.</param>
+    /// <remarks>The provider's clients must have <c>BaseAddress</c>, timeout, and auth configured — use <c>SwarmClientServiceCollectionExtensions.AddSwarmClient</c>, which does this automatically.</remarks>
+    public SwarmClient(SwarmClientOptions options, Func<HttpClient>? httpClientProvider, ILoggerFactory? loggerFactory = null)
     {
-    }
-
-    /// <summary>Private shared constructor implementing the initialization logic for HttpClient and infrastructure components.</summary>
-    private SwarmClient(HttpClient httpClient, SwarmClientOptions options, ILogger<SwarmClient>? logger, bool disposeHttpClient)
-    {
-        ArgumentNullException.ThrowIfNull(httpClient);
-        ArgumentNullException.ThrowIfNull(options);
-        if (httpClient.BaseAddress is null)
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _loggerFactory = loggerFactory;
+        _logger = loggerFactory?.CreateLogger<SwarmClient>() ?? NullLogger<SwarmClient>.Instance;
+        if (httpClientProvider is null)
         {
-            httpClient.BaseAddress = new Uri(options.BaseUrl);
+            _ownedHttpClient = CreateOwnedHttpClient(options);
+            _httpClientProvider = () => _ownedHttpClient;
         }
-        httpClient.Timeout = options.HttpTimeout;
-        ConfigureAuthorizationHeader(httpClient, options);
-        Internal.HttpClient = httpClient;
-        Internal.DisposeHttpClient = disposeHttpClient;
-        Internal.Logger = logger ?? NullLogger<SwarmClient>.Instance;
+        else
+        {
+            _httpClientProvider = httpClientProvider;
+        }
         SwarmHttpClient? swarmHttpClient = null;
-        Internal.SessionManager = new SessionManager(httpClientFactory: () => swarmHttpClient!, logger: null);
-        swarmHttpClient = new SwarmHttpClient(httpClient, Internal.SessionManager, logger: null);
-        Internal.SwarmHttpClient = swarmHttpClient;
-        Internal.WebSocketClient = new SwarmWebSocketClient(options, Internal.SessionManager, logger: null);
-        Generation = new GenerationEndpoint(Internal.SwarmHttpClient, Internal.WebSocketClient, Internal.SessionManager, logger: null);
-        Models = new ModelsEndpoint(Internal.SwarmHttpClient, Internal.WebSocketClient, Internal.SessionManager, logger: null);
-        Backends = new BackendsEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
-        Presets = new PresetsEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
-        User = new UserEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
-        Admin = new AdminEndpoint(Internal.SwarmHttpClient, Internal.SessionManager, logger: null);
-        Extensions = new SwarmExtensions(Internal.SwarmHttpClient, Internal.WebSocketClient, Internal.SessionManager, loggerFactory: null);
-        Internal.Logger.LogInformation("SwarmClient initialized for {BaseUrl}", options.BaseUrl);
+        _sessionManager = new SessionManager(httpClientFactory: () => swarmHttpClient!, options, loggerFactory?.CreateLogger<SessionManager>());
+        swarmHttpClient = new SwarmHttpClient(_httpClientProvider, _sessionManager, options, loggerFactory?.CreateLogger<SwarmHttpClient>());
+        _swarmHttpClient = swarmHttpClient;
+        _webSocketClient = new SwarmWebSocketClient(options, _sessionManager, loggerFactory?.CreateLogger<SwarmWebSocketClient>());
+        Generation = new GenerationEndpoint(_swarmHttpClient, _webSocketClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<GenerationEndpoint>());
+        Models = new ModelsEndpoint(_swarmHttpClient, _webSocketClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<ModelsEndpoint>());
+        Backends = new BackendsEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<BackendsEndpoint>());
+        Presets = new PresetsEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<PresetsEndpoint>());
+        User = new UserEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<UserEndpoint>());
+        Admin = new AdminEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<AdminEndpoint>());
+        Extensions = new SwarmExtensions(_swarmHttpClient, _webSocketClient, SwarmSessionKeys.Default, loggerFactory);
+        _logger.LogInformation("SwarmClient initialized for {BaseUrl}", options.NormalizedBaseUrl);
     }
 
-    /// <summary>Creates and configures an HttpClient for standalone usage.</summary>
-    private static HttpClient CreateConfiguredHttpClient(SwarmClientOptions options, HttpMessageHandler? handler = null)
+    /// <summary>Creates the owned HttpClient for standalone usage, with pooled connections so DNS changes are honored.</summary>
+    private static HttpClient CreateOwnedHttpClient(SwarmClientOptions options)
     {
-        if (options is null)
+        SocketsHttpHandler handler = new()
         {
-            throw new ArgumentNullException(nameof(options));
-        }
-        HttpClient httpClient = handler is not null ? new HttpClient(handler) : new HttpClient();
-        httpClient.BaseAddress = new Uri(options.BaseUrl);
-        httpClient.Timeout = options.HttpTimeout;
-        ConfigureAuthorizationHeader(httpClient, options);
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+        };
+        HttpClient httpClient = new(handler, disposeHandler: true)
+        {
+            BaseAddress = new Uri(options.NormalizedBaseUrl),
+            Timeout = options.HttpTimeout
+        };
+        ConfigureAuth(httpClient, options);
         return httpClient;
     }
 
-    /// <summary>Configures the Authorization header on the provided HttpClient based on SwarmClientOptions.</summary>
-    /// <param name="httpClient">The HTTP client to configure.</param>
-    /// <param name="options">The options containing the authorization value.</param>
-    internal static void ConfigureAuthorizationHeader(HttpClient httpClient, SwarmClientOptions options)
+    /// <summary>Applies header or cookie authentication to an HttpClient per the options. Safe to call only before the client's first request.</summary>
+    public static void ConfigureAuth(HttpClient httpClient, SwarmClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
-        if (!string.IsNullOrEmpty(options.Authorization))
+        if (string.IsNullOrEmpty(options.Authorization))
+        {
+            return;
+        }
+        if (options.AuthMode == SwarmAuthMode.SwarmTokenCookie)
+        {
+            httpClient.DefaultRequestHeaders.Remove("Cookie");
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", $"swarm_token={options.Authorization}");
+        }
+        else
         {
             string headerName = string.IsNullOrWhiteSpace(options.AuthorizationHeaderName) ? "Authorization" : options.AuthorizationHeaderName;
             httpClient.DefaultRequestHeaders.Remove(headerName);
@@ -147,66 +140,105 @@ public class SwarmClient : ISwarmClient
         }
     }
 
-    /// <summary>Performs a health check on the SwarmUI server to verify connectivity and response time.</summary>
-    /// <param name="cancellationToken">Cancellation token for the operation.</param>
-    /// <returns>Health status information including reachability, response time, and error details.</returns>
-    /// <remarks>Uses a lightweight session creation call to validate basic server health. See CodingGuidelines.md for behavior details.</remarks>
+    /// <inheritdoc />
+    public ISwarmClient ForSession(string sessionKey)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sessionKey);
+        return new SessionScopedClient(this, sessionKey);
+    }
+
+    /// <inheritdoc />
     public async Task<HealthCheckResponse> GetHealthAsync(CancellationToken cancellationToken = default)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
         try
         {
-            Internal.Logger.LogDebug("Performing health check");
-            string sessionId = await Internal.SessionManager.GetOrCreateSessionAsync(cancellationToken).ConfigureAwait(false);
+            // A real sessionless probe every call — never cached client state.
+            JObject response = await _swarmHttpClient.PostJsonAsync<JObject>("GetNewSession", payload: null, cancellationToken: cancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
-            Internal.Logger.LogInformation("Health check successful - server is healthy (response time: {ResponseTime}ms)", stopwatch.ElapsedMilliseconds);
+            _logger.LogDebug("Health check successful ({ResponseTime}ms)", stopwatch.ElapsedMilliseconds);
             return new HealthCheckResponse
             {
                 IsHealthy = true,
                 ResponseTime = stopwatch.Elapsed,
                 Error = null,
-                ServerVersion = null // TODO: Could be populated from API response
+                ServerVersion = response["version"]?.ToString(),
+                ServerId = response["server_id"]?.ToString()
             };
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
-            Internal.Logger.LogWarning(ex, "Health check failed after {ResponseTime}ms: {Error}", stopwatch.ElapsedMilliseconds, ex.Message);
+            _logger.LogWarning(ex, "Health check failed after {ResponseTime}ms: {Error}", stopwatch.ElapsedMilliseconds, ex.Message);
             return new HealthCheckResponse
             {
                 IsHealthy = false,
                 ResponseTime = stopwatch.Elapsed,
                 Error = ex.Message,
-                ServerVersion = null
+                ServerVersion = null,
+                ServerId = null
             };
         }
     }
 
-    /// <summary>Disposes of all resources used by this client.</summary>
-    /// <remarks>Closes active WebSocket connections, disposes owned HttpClient instances, and releases session resources. Disposal is safe to call multiple times.</remarks>
+    /// <inheritdoc />
+    public Task DisconnectAllAsync(CancellationToken cancellationToken = default) => _webSocketClient.DisconnectAllAsync(cancellationToken);
+
+    /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        Internal.Logger.LogDebug("Disposing SwarmClient");
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+        _logger.LogDebug("Disposing SwarmClient");
         try
         {
-            if (Internal.WebSocketClient is not null)
-            {
-                await Internal.WebSocketClient.DisconnectAllAsync().ConfigureAwait(false);
-            }
-            if (Internal.SessionManager is IDisposable disposableSessionManager)
-            {
-                disposableSessionManager.Dispose();
-            }
-            if (Internal.DisposeHttpClient && Internal.HttpClient is not null)
-            {
-                Internal.HttpClient.Dispose();
-                Internal.Logger.LogDebug("Disposed owned HttpClient");
-            }
-            Internal.Logger.LogInformation("SwarmClient disposed successfully");
+            await _webSocketClient.DisconnectAllAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Internal.Logger.LogError(ex, "Error during SwarmClient disposal");
+            _logger.LogWarning(ex, "Error disconnecting WebSockets during disposal");
         }
+        _sessionManager.Dispose();
+        _ownedHttpClient?.Dispose();
+        GC.SuppressFinalize(this);
+        _logger.LogInformation("SwarmClient disposed");
+    }
+
+    /// <summary>Lightweight per-session-key view over a root <see cref="SwarmClient"/>. Shares all connections and resources with the root; disposal is a no-op.</summary>
+    private sealed class SessionScopedClient : ISwarmClient
+    {
+        private readonly SwarmClient _root;
+
+        public IGenerationEndpoint Generation { get; }
+        public IModelsEndpoint Models { get; }
+        public IBackendsEndpoint Backends { get; }
+        public IPresetsEndpoint Presets { get; }
+        public IUserEndpoint User { get; }
+        public IAdminEndpoint Admin { get; }
+        public ISwarmExtensions Extensions { get; }
+        public ISessionManager Sessions => _root.Sessions;
+
+        public SessionScopedClient(SwarmClient root, string sessionKey)
+        {
+            _root = root;
+            Generation = new GenerationEndpoint(root._swarmHttpClient, root._webSocketClient, sessionKey, root._loggerFactory?.CreateLogger<GenerationEndpoint>());
+            Models = new ModelsEndpoint(root._swarmHttpClient, root._webSocketClient, sessionKey, root._loggerFactory?.CreateLogger<ModelsEndpoint>());
+            Backends = new BackendsEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<BackendsEndpoint>());
+            Presets = new PresetsEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<PresetsEndpoint>());
+            User = new UserEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<UserEndpoint>());
+            Admin = new AdminEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<AdminEndpoint>());
+            Extensions = new SwarmExtensions(root._swarmHttpClient, root._webSocketClient, sessionKey, root._loggerFactory);
+        }
+
+        public ISwarmClient ForSession(string sessionKey) => _root.ForSession(sessionKey);
+
+        public Task<HealthCheckResponse> GetHealthAsync(CancellationToken cancellationToken = default) => _root.GetHealthAsync(cancellationToken);
+
+        public Task DisconnectAllAsync(CancellationToken cancellationToken = default) => _root.DisconnectAllAsync(cancellationToken);
+
+        /// <summary>No-op: session views do not own resources. Dispose the root client instead.</summary>
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

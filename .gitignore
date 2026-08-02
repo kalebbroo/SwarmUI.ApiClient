@@ -58,3 +58,6 @@ dkms.conf
 /Tests/obj
 /Tests/bin
 /.vs
+/nupkg
+/artifacts
+*.nupkg

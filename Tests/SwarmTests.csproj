@@ -4,6 +4,8 @@
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>SwarmUI.ApiClient.Tests</AssemblyName>
+    <RootNamespace>SwarmUI.ApiClient.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

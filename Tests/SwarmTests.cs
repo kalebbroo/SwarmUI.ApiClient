@@ -14,8 +14,8 @@ namespace SwarmUI.ApiClient.Tests
         {
             SwarmClientOptions options = new()
             {
-                BaseUrl = "http://192.168.0.163:7801",
-                Authorization = "sui_auth_EPdaV_aVaw_Cr99IkUgKvA_hjW8fAWH",
+                BaseUrl = Environment.GetEnvironmentVariable("SWARM_TEST_URL") ?? "http://localhost:7801",
+                Authorization = Environment.GetEnvironmentVariable("SWARM_TEST_AUTH") ?? "",
                 HttpTimeout = TimeSpan.FromSeconds(30)
             };
 

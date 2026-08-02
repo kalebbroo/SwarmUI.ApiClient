@@ -17,7 +17,7 @@ namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
         /// <summary>Builds an endpoint over recording doubles.</summary>
         private static MagicPromptEndpoint CreateEndpoint(RecordingExtensionHttpClient httpClient)
         {
-            return new MagicPromptEndpoint(httpClient, new StubSessionManager(), logger: null);
+            return new MagicPromptEndpoint(httpClient, SwarmUI.ApiClient.Sessions.SwarmSessionKeys.Default, logger: null);
         }
 
         [Fact]
@@ -82,7 +82,7 @@ namespace SwarmUI.ApiClient.Tests.Extensions.MagicPrompt
         public void SwarmExtensions_ReportsEverySupportedExtension()
         {
             RecordingExtensionHttpClient httpClient = new RecordingExtensionHttpClient();
-            SwarmExtensions extensions = new SwarmExtensions(httpClient, new RecordingExtensionWebSocketClient(), new StubSessionManager(), loggerFactory: null);
+            SwarmExtensions extensions = new SwarmExtensions(httpClient, new RecordingExtensionWebSocketClient(), SwarmUI.ApiClient.Sessions.SwarmSessionKeys.Default, loggerFactory: null);
 
             Assert.Contains(extensions.All, info => info.Name == "AudioLab");
             Assert.Contains(extensions.All, info => info.Name == "LLMAssistant");

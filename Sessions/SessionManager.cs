@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -9,156 +11,231 @@ using SwarmUI.ApiClient.Http;
 
 namespace SwarmUI.ApiClient.Sessions;
 
-/// <summary>Manages SwarmUI session lifecycle with caching and thread-safe creation.</summary>
-/// <remarks>Handles session_id creation, caching, invalidation, and refresh in response to <c>invalid_session_id</c> errors. See CodingGuidelines.md (Sessions section) for lifecycle and implementation details.</remarks>
+/// <summary>Keyed SwarmUI session pool with single-flight creation, compare-and-swap invalidation, and failure backoff.</summary>
+/// <remarks>Each key holds one immutable unit of state: a <c>Task&lt;SwarmSessionInfo&gt;</c>. Concurrent callers of one key await the same creation task; invalidation only clears the state when the failing session id still matches, so a wave of failures for one stale session converges on exactly one GetNewSession call.</remarks>
 public class SessionManager : ISessionManager, IDisposable
 {
-    /// <summary>Internal implementation data containing session state and dependencies.</summary>
-    public struct Impl
+    /// <summary>Per-key session slot. The unit of published state is the single <see cref="_current"/> task reference — never a multi-field pair — so readers can never observe a torn or half-updated session.</summary>
+    private sealed class SessionSlot
     {
-        /// <summary>Currently cached session ID string, or null if none has been created or it was invalidated.</summary>
-        public string? CurrentSession;
+        /// <summary>Guards swaps of <see cref="_current"/>. Never held across I/O.</summary>
+        public readonly object Gate = new();
 
-        /// <summary>Indicates whether the cached session is considered valid. When false, a new session will be created on the next request.</summary>
-        public bool IsSessionValid;
+        /// <summary>The current session state: an in-flight, completed, or faulted creation task; null when invalidated or never created.</summary>
+        private Task<SwarmSessionInfo>? _current;
 
-        /// <summary>Semaphore ensuring only one thread creates a session at a time.</summary>
-        public SemaphoreSlim SessionLock;
+        /// <summary>UTC ticks of the most recent failed creation, for failure backoff.</summary>
+        public long LastFailureUtcTicks;
 
-        /// <summary>Factory function that provides the HTTP client when needed, breaking the circular dependency with SwarmHttpClient.</summary>
-        public Func<ISwarmHttpClient> HttpClientFactory;
+        /// <summary>UTC ticks of the last access, for optional idle eviction.</summary>
+        public long LastAccessTicks;
 
-        /// <summary>Lazily-initialized HTTP client for making GetNewSession API calls.</summary>
-        public ISwarmHttpClient? HttpClientCache;
+        public Task<SwarmSessionInfo>? Current => Volatile.Read(ref _current);
 
-        /// <summary>Logger for session lifecycle events.</summary>
-        public ILogger<SessionManager> Logger;
+        /// <summary>Sets the current task. Callers must hold <see cref="Gate"/>.</summary>
+        public void SetCurrent(Task<SwarmSessionInfo>? value) => Volatile.Write(ref _current, value);
+
+        public void Touch() => Volatile.Write(ref LastAccessTicks, DateTimeOffset.UtcNow.UtcTicks);
     }
 
-    /// <summary>Internal implementation data for advanced scenarios; typical usage should go through the public methods.</summary>
-    public Impl Internal;
+    private readonly ConcurrentDictionary<string, SessionSlot> _slots = new();
+    private readonly Func<ISwarmHttpClient> _httpClientFactory;
+    private readonly SwarmClientOptions _options;
+    private readonly ILogger<SessionManager> _logger;
+    private ISwarmHttpClient? _httpClientCache;
+    private long _lastEvictionSweepTicks;
+    private volatile bool _disposed;
 
-    /// <summary>Gets the HTTP client, lazily initializing it on first access.</summary>
-    private ISwarmHttpClient HttpClient => Internal.HttpClientCache ??= Internal.HttpClientFactory();
-
-    /// <summary>Creates a new SessionManager instance.</summary>
-    /// <param name="httpClientFactory">Factory used to obtain the HTTP client for GetNewSession calls.</param>
+    /// <summary>Creates a new SessionManager.</summary>
+    /// <param name="httpClientFactory">Factory used to obtain the HTTP client for GetNewSession calls (deferred to break the circular dependency with SwarmHttpClient).</param>
+    /// <param name="options">Client options (failure backoff, idle eviction).</param>
     /// <param name="logger">Optional logger for session lifecycle events.</param>
-    public SessionManager(Func<ISwarmHttpClient> httpClientFactory, ILogger<SessionManager>? logger = null)
+    public SessionManager(Func<ISwarmHttpClient> httpClientFactory, SwarmClientOptions options, ILogger<SessionManager>? logger = null)
     {
-        Internal.HttpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
-        Internal.HttpClientCache = null;
-        Internal.Logger = logger ?? NullLogger<SessionManager>.Instance;
-        Internal.SessionLock = new(1, 1);
-        Internal.IsSessionValid = false;
-        Internal.CurrentSession = null;
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = logger ?? NullLogger<SessionManager>.Instance;
     }
 
-    /// <summary>Gets the current cached session ID or creates a new one if none exists or if invalid.</summary>
-    /// <param name="cancellationToken">Cancellation token for the session creation request.</param>
-    /// <returns>A valid session ID string that can be used immediately for API calls.</returns>
-    /// <exception cref="SwarmSessionException">Thrown when GetNewSession fails or returns invalid data. Callers should treat this as a fatal error requiring user intervention.</exception>
-    /// <remarks>Uses double-check locking with a semaphore so only one thread creates a session when none is cached.</remarks>
-    public async Task<string> GetOrCreateSessionAsync(CancellationToken cancellationToken = default)
+    private ISwarmHttpClient HttpClient => _httpClientCache ??= _httpClientFactory();
+
+    /// <inheritdoc />
+    public async Task<string> GetOrCreateSessionAsync(string sessionKey = SwarmSessionKeys.Default, CancellationToken cancellationToken = default)
     {
-        // Fast path: return cached session without locking
-        if (Internal.IsSessionValid && Internal.CurrentSession is not null)
+        SwarmSessionInfo info = await GetOrCreateSessionInfoAsync(sessionKey, cancellationToken).ConfigureAwait(false);
+        return info.SessionId;
+    }
+
+    /// <inheritdoc />
+    public async Task<string> RefreshSessionAsync(string sessionKey, string? observedSessionId, CancellationToken cancellationToken = default)
+    {
+        InvalidateSession(sessionKey, observedSessionId);
+        return await GetOrCreateSessionAsync(sessionKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public void InvalidateSession(string sessionKey, string? observedSessionId)
+    {
+        ArgumentNullException.ThrowIfNull(sessionKey);
+        if (!_slots.TryGetValue(sessionKey, out SessionSlot? slot))
         {
-            return Internal.CurrentSession;
+            return;
         }
-        // Slow path: need to create session, acquire lock for thread safety
-        await Internal.SessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        lock (slot.Gate)
         {
-            // Double-check: another thread might have created session while we waited
-            if (Internal.IsSessionValid && Internal.CurrentSession is not null)
+            Task<SwarmSessionInfo>? current = slot.Current;
+            if (current is null)
             {
-                return Internal.CurrentSession;
+                return;
             }
-            Internal.Logger.LogDebug("Creating new SwarmUI session");
-            string newSession = await CreateNewSessionAsync(cancellationToken).ConfigureAwait(false);
-            Internal.CurrentSession = newSession;
-            Internal.IsSessionValid = true;
-            Internal.Logger.LogDebug("Session created and cached: {SessionId}", newSession.Substring(0, Math.Min(8, newSession.Length)));
-            return newSession;
-        }
-        finally
-        {
-            Internal.SessionLock.Release();
+            // A still-running creation task is never invalidated: the caller can't have observed its result yet.
+            if (!current.IsCompleted)
+            {
+                return;
+            }
+            if (current.IsCompletedSuccessfully)
+            {
+                if (observedSessionId is not null && current.Result.SessionId != observedSessionId)
+                {
+                    // Someone already refreshed past the session the caller saw fail; keep the newer one.
+                    return;
+                }
+                _logger.LogWarning("Session invalidated for key '{Key}' (session {SessionId}...)", sessionKey, Truncate(current.Result.SessionId));
+            }
+            slot.SetCurrent(null);
         }
     }
 
-    /// <summary>Forces creation of a new session, invalidating any cached session.</summary>
-    /// <param name="cancellationToken">Cancellation token for the session creation request.</param>
-    /// <returns>A new session ID that has been cached and marked valid.</returns>
-    /// <exception cref="SwarmSessionException">Thrown when GetNewSession fails or returns invalid data.</exception>
-    /// <remarks>Always calls GetNewSession regardless of cache state; most callers should prefer GetOrCreateSessionAsync.</remarks>
-    public async Task<string> RefreshSessionAsync(CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public SwarmSessionInfo? GetCachedSession(string sessionKey = SwarmSessionKeys.Default)
     {
-        await Internal.SessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(sessionKey);
+        if (!_slots.TryGetValue(sessionKey, out SessionSlot? slot))
+        {
+            return null;
+        }
+        Task<SwarmSessionInfo>? current = slot.Current;
+        return current is { IsCompletedSuccessfully: true } ? current.Result : null;
+    }
+
+    /// <summary>Gets or creates the full session snapshot for a key. Used internally and by SwarmClient for health data.</summary>
+    public async Task<SwarmSessionInfo> GetOrCreateSessionInfoAsync(string sessionKey, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sessionKey);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        MaybeSweepIdleSlots();
+        SessionSlot slot = _slots.GetOrAdd(sessionKey, static _ => new SessionSlot());
+        slot.Touch();
+        Task<SwarmSessionInfo>? current = slot.Current;
+        if (current is { IsCompletedSuccessfully: true })
+        {
+            return current.Result;
+        }
+        Task<SwarmSessionInfo> creation;
+        lock (slot.Gate)
+        {
+            current = slot.Current;
+            if (current is not null)
+            {
+                if (current.IsFaulted || current.IsCanceled)
+                {
+                    // Failure backoff: fail fast with the cached error inside the window instead of hammering GetNewSession.
+                    long lastFailure = Volatile.Read(ref slot.LastFailureUtcTicks);
+                    if (DateTimeOffset.UtcNow.UtcTicks - lastFailure < _options.SessionCreateFailureBackoff.Ticks)
+                    {
+                        creation = current;
+                    }
+                    else
+                    {
+                        creation = StartCreation(sessionKey, slot);
+                        slot.SetCurrent(creation);
+                    }
+                }
+                else
+                {
+                    // In-flight or already successful: share it.
+                    creation = current;
+                }
+            }
+            else
+            {
+                creation = StartCreation(sessionKey, slot);
+                slot.SetCurrent(creation);
+            }
+        }
+        // WaitAsync so one caller's cancellation doesn't cancel the shared creation task for everyone else.
+        return await creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Starts a session creation task for a slot. Must be called under the slot gate; the task body runs outside it.</summary>
+    private Task<SwarmSessionInfo> StartCreation(string sessionKey, SessionSlot slot)
+    {
+        _logger.LogDebug("Creating new SwarmUI session for key '{Key}'", sessionKey);
+        return CreateNewSessionAsync(sessionKey, slot);
+    }
+
+    /// <summary>Calls GetNewSession and converts the response to a <see cref="SwarmSessionInfo"/>. Failures stamp the slot for backoff.</summary>
+    private async Task<SwarmSessionInfo> CreateNewSessionAsync(string sessionKey, SessionSlot slot)
+    {
         try
         {
-            Internal.Logger.LogInformation("Forcing session refresh");
-            Internal.IsSessionValid = false;
-            string newSession = await CreateNewSessionAsync(cancellationToken).ConfigureAwait(false);
-            Internal.CurrentSession = newSession;
-            Internal.IsSessionValid = true;
-            Internal.Logger.LogInformation("Session refreshed: {SessionId}", newSession.Substring(0, Math.Min(8, newSession.Length)));
-            return newSession;
-        }
-        finally
-        {
-            Internal.SessionLock.Release();
-        }
-    }
-
-    /// <summary>Marks the current cached session as invalid without creating a new one. This should be called when SwarmUI returns an error with error_id="invalid_session_id".</summary>
-    /// <remarks>Called by SwarmHttpClient when it detects a session rejection; marking the session invalid is atomic and the next GetOrCreateSessionAsync call creates a new session.</remarks>
-    public void InvalidateSession()
-    {
-        Internal.Logger.LogWarning("Session invalidated by server");
-        Internal.IsSessionValid = false;
-        // We don't clear CurrentSession to allow inspection for debugging
-    }
-
-    /// <summary>Gets the current cached session ID without creating a new one. Returns null if no session is cached or if the cached session is marked invalid.</summary>
-    /// <value>The current session ID string, or null if no valid session is available.</value>
-    /// <remarks>Primarily for debugging and monitoring; the value may be stale even when non-null, and most code should use GetOrCreateSessionAsync.</remarks>
-    public string? CurrentSessionId => Internal.IsSessionValid ? Internal.CurrentSession : null;
-
-    /// <summary>Disposes of managed resources used by the SessionManager.</summary>
-    /// <remarks>Releases the SessionLock semaphore; dispose the manager when no longer needed.</remarks>
-    public void Dispose()
-    {
-        Internal.SessionLock?.Dispose();
-    }
-
-    /// <summary>Creates a new session by calling SwarmUI's GetNewSession API endpoint.</summary>
-    /// <param name="cancellationToken">Cancellation token for the API request.</param>
-    /// <returns>A new session ID string obtained from SwarmUI.</returns>
-    /// <exception cref="SwarmSessionException">Thrown when the API call fails, returns invalid JSON, or doesn't include a session_id field.</exception>
-    /// <remarks>Used only by GetOrCreateSessionAsync and RefreshSessionAsync. The GetNewSession endpoint does not require a session_id, which allows SessionManager and SwarmHttpClient to break their circular dependency.</remarks>
-    private async Task<string> CreateNewSessionAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            JObject response = await HttpClient.PostJsonAsync<JObject>("GetNewSession", null, cancellationToken).ConfigureAwait(false);
+            JObject response = await HttpClient.PostJsonAsync<JObject>("GetNewSession", payload: null, sessionKey: sessionKey, cancellationToken: CancellationToken.None).ConfigureAwait(false);
             string? sessionId = response["session_id"]?.ToString();
             if (string.IsNullOrWhiteSpace(sessionId))
             {
-                Internal.Logger.LogError("GetNewSession returned invalid response: {Response}", response);
+                _logger.LogError("GetNewSession returned a response without a session_id field");
                 throw new SwarmSessionException("GetNewSession API returned a response without a valid session_id field");
             }
-            return sessionId;
-        }
-        catch (SwarmSessionException)
-        {
-            throw;
+            SwarmSessionInfo info = new(
+                SessionId: sessionId,
+                UserId: response["user_id"]?.ToString(),
+                ServerVersion: response["version"]?.ToString(),
+                ServerId: response["server_id"]?.ToString(),
+                CreatedAt: DateTimeOffset.UtcNow);
+            _logger.LogInformation("Session created for key '{Key}': {SessionId}... (user '{UserId}', server version {Version})", sessionKey, Truncate(sessionId), info.UserId, info.ServerVersion);
+            return info;
         }
         catch (Exception ex)
         {
-            Internal.Logger.LogError(ex, "Failed to create new session");
+            Volatile.Write(ref slot.LastFailureUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
+            if (ex is SwarmSessionException)
+            {
+                throw;
+            }
+            _logger.LogError(ex, "Failed to create session for key '{Key}'", sessionKey);
             throw new SwarmSessionException("Failed to obtain session from SwarmUI. Verify the server is running and accessible.", ex);
         }
     }
+
+    /// <summary>Opportunistically evicts slots idle beyond <see cref="SwarmClientOptions.SessionIdleEviction"/>. Runs at most once per minute, only when eviction is enabled.</summary>
+    private void MaybeSweepIdleSlots()
+    {
+        if (_options.SessionIdleEviction is not TimeSpan idle)
+        {
+            return;
+        }
+        long now = DateTimeOffset.UtcNow.UtcTicks;
+        long lastSweep = Volatile.Read(ref _lastEvictionSweepTicks);
+        if (now - lastSweep < TimeSpan.TicksPerMinute || Interlocked.CompareExchange(ref _lastEvictionSweepTicks, now, lastSweep) != lastSweep)
+        {
+            return;
+        }
+        foreach (KeyValuePair<string, SessionSlot> pair in _slots)
+        {
+            if (now - Volatile.Read(ref pair.Value.LastAccessTicks) > idle.Ticks)
+            {
+                _slots.TryRemove(pair.Key, out _);
+            }
+        }
+    }
+
+    /// <summary>Marks the manager disposed. Session slots hold no unmanaged resources; server-side sessions expire on their own.</summary>
+    public void Dispose()
+    {
+        _disposed = true;
+        _slots.Clear();
+        GC.SuppressFinalize(this);
+    }
+
+    private static string Truncate(string sessionId) => sessionId.Length > 8 ? sessionId[..8] : sessionId;
 }

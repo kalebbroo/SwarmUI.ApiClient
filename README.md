@@ -137,7 +137,7 @@ SwarmClientOptions options = new SwarmClientOptions
     BaseUrl = "https://hartsy.ai",
     Authorization = "your-api-key"
 };
-using SwarmClient client = new SwarmClient(options);
+await using SwarmClient client = new SwarmClient(options);
 GenerationRequest request = new GenerationRequest
 {
     Prompt = "A beautiful sunset over mountains",
@@ -150,9 +150,27 @@ await foreach (GenerationUpdate update in client.Generation.StreamGenerationAsyn
     if (update.Type == "progress")
         Console.WriteLine($"Progress: {update.Progress.CurrentPercent}%");
     else if (update.Type == "image")
-        SaveImage(update.Image.Image);
+        SaveImage(update.Image.Image);   // relative server path OR data: URL — check update.Image.IsDataUrl
+    else if (update.Type == "complete")
+        Console.WriteLine($"Done. Succeeded: {update.Completion.Succeeded}, images: {update.Completion.ImagesReceived}");
 }
 ```
+
+### Multi-user hosts: per-user sessions
+
+SwarmUI scopes generation queues, status counters, and `InterruptAll` to a *session*. If your app
+serves many users through one `ISwarmClient`, route each user through their own session key so one
+user's cancel can never kill another user's generation:
+
+```csharp
+ISwarmClient userView = swarm.ForSession(appUserId);
+await foreach (GenerationUpdate update in userView.Generation.StreamGenerationAsync(request, ct)) { /* ... */ }
+// Cancels ONLY this user's generations:
+await userView.Generation.InterruptAllAsync();
+```
+
+Sessions are pooled, created on demand, and transparently re-acquired if the SwarmUI server
+restarts or rejects one — a Swarm restart never requires restarting your app.
 
 ### Dependency Injection Usage
 ```csharp
@@ -178,7 +196,6 @@ public class ImageService(ISwarmClient swarm)
 
 This library follows strict coding guidelines:
 - No `var` keyword - always use explicit types
-- No `private` fields - use public `Impl` struct pattern
 - All public members must have XML documentation
 - Follow .NET naming conventions
 - Use `ConfigureAwait(false)` in library code

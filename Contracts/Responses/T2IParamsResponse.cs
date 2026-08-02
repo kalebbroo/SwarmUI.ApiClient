@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace SwarmUI.ApiClient.Contracts.Responses;
 
@@ -19,11 +20,14 @@ public class T2IParamsResponse
     [JsonProperty("groups")]
     public List<T2IParamGroup>? Groups { get; set; }
 
-    /// <summary>Mapping of model subtypes to available model identifiers.
+    /// <summary>Mapping of model subtypes to available model names.
     /// For example, the key "Stable-Diffusion" might map to a list of SD checkpoints,
     /// while "LoRA" maps to available LoRA files. The exact keys depend on the
     /// SwarmUI server configuration.</summary>
+    /// <remarks>Modern SwarmUI sends each entry as a <c>[name, compatClassId]</c> pair while older
+    /// versions sent plain name strings; both forms deserialize here (names only).</remarks>
     [JsonProperty("models")]
+    [JsonConverter(typeof(ModelsBySubtypeConverter))]
     public Dictionary<string, List<string>>? ModelsBySubtype { get; set; }
 
     /// <summary>List of wildcard identifiers available on the server. Wildcards are textual
@@ -38,6 +42,47 @@ public class T2IParamsResponse
     /// reproduce the exact UI behaviour can usually ignore this field.</summary>
     [JsonProperty("param_edits")]
     public Dictionary<string, object>? ParamEdits { get; set; }
+}
+
+/// <summary>Deserializes SwarmUI's <c>models</c> map, tolerating both wire formats: entries as plain
+/// name strings (older servers) or as <c>[name, compatClassId]</c> pairs (current servers).</summary>
+internal sealed class ModelsBySubtypeConverter : JsonConverter<Dictionary<string, List<string>>?>
+{
+    public override Dictionary<string, List<string>>? ReadJson(JsonReader reader, Type objectType, Dictionary<string, List<string>>? existingValue, bool hasExistingValue, JsonSerializer serializer)
+    {
+        if (reader.TokenType == JsonToken.Null)
+        {
+            return null;
+        }
+        JObject map = JObject.Load(reader);
+        Dictionary<string, List<string>> result = new(StringComparer.OrdinalIgnoreCase);
+        foreach (JProperty subtype in map.Properties())
+        {
+            List<string> names = [];
+            if (subtype.Value is JArray entries)
+            {
+                foreach (JToken entry in entries)
+                {
+                    string? name = entry switch
+                    {
+                        JArray pair when pair.Count > 0 => pair[0]?.ToString(),
+                        _ => entry.Type == JTokenType.String ? entry.ToString() : null
+                    };
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+            result[subtype.Name] = names;
+        }
+        return result;
+    }
+
+    public override void WriteJson(JsonWriter writer, Dictionary<string, List<string>>? value, JsonSerializer serializer)
+    {
+        serializer.Serialize(writer, value);
+    }
 }
 
 /// <summary>Describes a single configurable text-to-image parameter supported by SwarmUI.

@@ -8,7 +8,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Extensions.AudioLab.Contracts;
 using SwarmUI.ApiClient.Http;
-using SwarmUI.ApiClient.Sessions;
 using SwarmUI.ApiClient.WebSockets;
 
 namespace SwarmUI.ApiClient.Extensions.AudioLab;
@@ -46,39 +45,25 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         }
     };
 
-    /// <summary>Internal implementation data containing dependencies.</summary>
-    public struct Impl
-    {
-        /// <summary>HTTP client for making API requests with automatic session injection.</summary>
-        public ISwarmHttpClient HttpClient;
-
-        /// <summary>WebSocket client for streaming engine install operations.</summary>
-        public ISwarmWebSocketClient WebSocketClient;
-
-        /// <summary>Session manager for obtaining session IDs (used indirectly via HttpClient).</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>Logger for endpoint operations.</summary>
-        public ILogger<AudioLabEndpoint> Logger;
-    }
-
-    /// <summary>Internal implementation data for advanced scenarios; normal usage should use the public members.</summary>
-    public Impl Internal;
+    private readonly ISwarmHttpClient _httpClient;
+    private readonly ISwarmWebSocketClient _webSocketClient;
+    private readonly string _sessionKey;
+    private readonly ILogger<AudioLabEndpoint> _logger;
 
     /// <inheritdoc />
     public SwarmExtensionInfo Extension => ExtensionInfo;
 
-    /// <summary>Creates a new AudioLabEndpoint instance with the specified dependencies.</summary>
-    /// <param name="httpClient">HTTP client for API requests. Must not be null.</param>
-    /// <param name="webSocketClient">WebSocket client for streaming install operations. Must not be null.</param>
-    /// <param name="sessionManager">Session manager for session lifecycle. Must not be null.</param>
-    /// <param name="logger">Optional logger for operations. Uses NullLogger if null.</param>
-    public AudioLabEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, ISessionManager sessionManager, ILogger<AudioLabEndpoint>? logger = null)
+    /// <summary>Creates a new AudioLabEndpoint.</summary>
+    /// <param name="httpClient">HTTP client for API requests.</param>
+    /// <param name="webSocketClient">WebSocket client for streaming install operations.</param>
+    /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
+    /// <param name="logger">Optional logger.</param>
+    public AudioLabEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, string sessionKey, ILogger<AudioLabEndpoint>? logger = null)
     {
-        Internal.HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        Internal.WebSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
-        Internal.SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
-        Internal.Logger = logger ?? NullLogger<AudioLabEndpoint>.Instance;
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _webSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
+        _sessionKey = sessionKey ?? throw new ArgumentNullException(nameof(sessionKey));
+        _logger = logger ?? NullLogger<AudioLabEndpoint>.Instance;
     }
 
     /// <inheritdoc />
@@ -89,9 +74,9 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             throw new ArgumentException("Text cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Synthesizing {CharCount} chars of speech with voice '{Voice}' via provider '{ProviderId}'",
+        _logger.LogDebug("Synthesizing {CharCount} chars of speech with voice '{Voice}' via provider '{ProviderId}'",
             request.Text.Length, request.Voice, request.ProviderId ?? "(server default)");
-        TextToSpeechResponse response = await Internal.HttpClient.PostJsonAsync<TextToSpeechRequest, TextToSpeechResponse>("ProcessTTS", request, cancellationToken).ConfigureAwait(false);
+        TextToSpeechResponse response = await _httpClient.PostJsonAsync<TextToSpeechResponse>("ProcessTTS", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Speech synthesis");
         return response;
     }
@@ -104,9 +89,9 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             throw new ArgumentException("AudioData cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Transcribing audio in language '{Language}' via provider '{ProviderId}'",
+        _logger.LogDebug("Transcribing audio in language '{Language}' via provider '{ProviderId}'",
             request.Language, request.ProviderId ?? "(server default)");
-        SpeechToTextResponse response = await Internal.HttpClient.PostJsonAsync<SpeechToTextRequest, SpeechToTextResponse>("ProcessSTT", request, cancellationToken).ConfigureAwait(false);
+        SpeechToTextResponse response = await _httpClient.PostJsonAsync<SpeechToTextResponse>("ProcessSTT", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Transcription");
         return response;
     }
@@ -119,8 +104,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             throw new ArgumentException("ProviderId cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Processing audio via provider '{ProviderId}' with {ArgCount} argument(s)", request.ProviderId, request.Arguments.Count);
-        AudioProcessResponse response = await Internal.HttpClient.PostJsonAsync<AudioProcessRequest, AudioProcessResponse>("ProcessAudio", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Processing audio via provider '{ProviderId}' with {ArgCount} argument(s)", request.ProviderId, request.Arguments.Count);
+        AudioProcessResponse response = await _httpClient.PostJsonAsync<AudioProcessResponse>("ProcessAudio", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Audio processing");
         return response;
     }
@@ -133,8 +118,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             throw new ArgumentException("At least one workflow step is required", nameof(request));
         }
-        Internal.Logger.LogDebug("Running '{WorkflowType}' workflow with {StepCount} step(s)", request.WorkflowType, request.Steps.Count);
-        AudioWorkflowResponse response = await Internal.HttpClient.PostJsonAsync<AudioWorkflowRequest, AudioWorkflowResponse>("ProcessWorkflow", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Running '{WorkflowType}' workflow with {StepCount} step(s)", request.WorkflowType, request.Steps.Count);
+        AudioWorkflowResponse response = await _httpClient.PostJsonAsync<AudioWorkflowResponse>("ProcessWorkflow", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Workflow");
         return response;
     }
@@ -142,32 +127,32 @@ public class AudioLabEndpoint : IAudioLabEndpoint
     /// <inheritdoc />
     public async Task<AudioProvidersStatusResponse> GetProvidersStatusAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing audio providers");
-        AudioProvidersStatusResponse response = await Internal.HttpClient.PostJsonAsync<AudioProvidersStatusResponse>("GetAllProvidersStatus", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Retrieved {ProviderCount} audio provider(s)", response.TotalCount);
+        _logger.LogDebug("Listing audio providers");
+        AudioProvidersStatusResponse response = await _httpClient.PostJsonAsync<AudioProvidersStatusResponse>("GetAllProvidersStatus", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {ProviderCount} audio provider(s)", response.TotalCount);
         return response;
     }
 
     /// <inheritdoc />
     public async Task<AudioInstallationStatusResponse> GetInstallationStatusAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Checking audio installation status");
-        return await Internal.HttpClient.PostJsonAsync<AudioInstallationStatusResponse>("GetInstallationStatus", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Checking audio installation status");
+        return await _httpClient.PostJsonAsync<AudioInstallationStatusResponse>("GetInstallationStatus", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<AudioInstallationProgressResponse> GetInstallationProgressAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading audio installation progress");
-        return await Internal.HttpClient.PostJsonAsync<AudioInstallationProgressResponse>("GetInstallationProgress", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading audio installation progress");
+        return await _httpClient.PostJsonAsync<AudioInstallationProgressResponse>("GetInstallationProgress", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<AudioEnginesResponse> ListEnginesAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing audio engines");
-        AudioEnginesResponse response = await Internal.HttpClient.PostJsonAsync<AudioEnginesResponse>("AudioLabListEngines", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Retrieved {EngineCount} audio engine(s), backend status: {BackendStatus}", response.Engines.Length, response.BackendStatus);
+        _logger.LogDebug("Listing audio engines");
+        AudioEnginesResponse response = await _httpClient.PostJsonAsync<AudioEnginesResponse>("AudioLabListEngines", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {EngineCount} audio engine(s), backend status: {BackendStatus}", response.Engines.Length, response.BackendStatus);
         return response;
     }
 
@@ -186,8 +171,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             payload["model_id"] = modelId;
         }
-        Internal.Logger.LogDebug("Streaming install of engine '{ProviderId}' (model: {ModelId})", providerId, modelId ?? "(default set)");
-        return Internal.WebSocketClient.StreamMessagesAsync("AudioLabInstallEngine", payload, ParseInstallUpdate, cancellationToken);
+        _logger.LogDebug("Streaming install of engine '{ProviderId}' (model: {ModelId})", providerId, modelId ?? "(default set)");
+        return StreamInstallCoreAsync("AudioLabInstallEngine", payload, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -201,8 +186,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             ["provider_id"] = providerId
         };
-        Internal.Logger.LogDebug("Streaming install of all pending models for engine '{ProviderId}'", providerId);
-        return Internal.WebSocketClient.StreamMessagesAsync("AudioLabInstallAllModels", payload, ParseInstallUpdate, cancellationToken);
+        _logger.LogDebug("Streaming install of all pending models for engine '{ProviderId}'", providerId);
+        return StreamInstallCoreAsync("AudioLabInstallAllModels", payload, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -221,8 +206,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             payload["model_id"] = modelId;
         }
-        Internal.Logger.LogDebug("Uninstalling engine '{ProviderId}' (deleteWeights: {DeleteWeights}, model: {ModelId})", providerId, deleteWeights, modelId ?? "(all)");
-        AudioEngineOperationResponse response = await Internal.HttpClient.PostJsonAsync<AudioEngineOperationResponse>("AudioLabUninstallEngine", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Uninstalling engine '{ProviderId}' (deleteWeights: {DeleteWeights}, model: {ModelId})", providerId, deleteWeights, modelId ?? "(all)");
+        AudioEngineOperationResponse response = await _httpClient.PostJsonAsync<AudioEngineOperationResponse>("AudioLabUninstallEngine", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Engine uninstall");
         return response;
     }
@@ -238,15 +223,15 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             ["provider_id"] = providerId
         };
-        Internal.Logger.LogDebug("Removing all model weights for engine '{ProviderId}'", providerId);
-        AudioEngineOperationResponse response = await Internal.HttpClient.PostJsonAsync<AudioEngineOperationResponse>("AudioLabRemoveAllModels", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Removing all model weights for engine '{ProviderId}'", providerId);
+        AudioEngineOperationResponse response = await _httpClient.PostJsonAsync<AudioEngineOperationResponse>("AudioLabRemoveAllModels", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         if (response.Success)
         {
-            Internal.Logger.LogInformation("Removed {Removed}/{Total} model(s) for engine '{ProviderId}'", response.Removed, response.Total, providerId);
+            _logger.LogInformation("Removed {Removed}/{Total} model(s) for engine '{ProviderId}'", response.Removed, response.Total, providerId);
         }
         else
         {
-            Internal.Logger.LogWarning("Failed to remove models for engine '{ProviderId}': {Error}", providerId, response.Error ?? "Unknown error");
+            _logger.LogWarning("Failed to remove models for engine '{ProviderId}': {Error}", providerId, response.Error ?? "Unknown error");
         }
         return response;
     }
@@ -259,8 +244,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             throw new ArgumentException("AudioData cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Converting audio to '{Format}'", request.Format);
-        AudioFormatConversionResponse response = await Internal.HttpClient.PostJsonAsync<AudioFormatConversionRequest, AudioFormatConversionResponse>("ConvertAudioFormat", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Converting audio to '{Format}'", request.Format);
+        AudioFormatConversionResponse response = await _httpClient.PostJsonAsync<AudioFormatConversionResponse>("ConvertAudioFormat", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Audio conversion");
         return response;
     }
@@ -277,10 +262,10 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             throw new ArgumentOutOfRangeException(nameof(request), request.Rate, "Rate must be within 0.25-4.0");
         }
-        Internal.Logger.LogDebug("Time-stretching audio at rate {Rate} with {Semitones} semitone shift",
+        _logger.LogDebug("Time-stretching audio at rate {Rate} with {Semitones} semitone shift",
             request.Rate.ToString("0.###", CultureInfo.InvariantCulture),
             request.Semitones.ToString("0.###", CultureInfo.InvariantCulture));
-        AudioTimeStretchResponse response = await Internal.HttpClient.PostJsonAsync<AudioTimeStretchRequest, AudioTimeStretchResponse>("AudioLabTimeStretch", request, cancellationToken).ConfigureAwait(false);
+        AudioTimeStretchResponse response = await _httpClient.PostJsonAsync<AudioTimeStretchResponse>("AudioLabTimeStretch", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Time stretch");
         return response;
     }
@@ -301,8 +286,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
             ["name"] = name,
             ["project_json"] = projectJson
         };
-        Internal.Logger.LogDebug("Saving DAW project '{Name}' ({Size} chars)", name, projectJson.Length);
-        DawProjectSaveResponse response = await Internal.HttpClient.PostJsonAsync<DawProjectSaveResponse>("AudioLabSaveProject", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Saving DAW project '{Name}' ({Size} chars)", name, projectJson.Length);
+        DawProjectSaveResponse response = await _httpClient.PostJsonAsync<DawProjectSaveResponse>("AudioLabSaveProject", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "DAW project save");
         return response;
     }
@@ -318,8 +303,8 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             ["name"] = name
         };
-        Internal.Logger.LogDebug("Loading DAW project '{Name}'", name);
-        DawProjectResponse response = await Internal.HttpClient.PostJsonAsync<DawProjectResponse>("AudioLabLoadProject", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Loading DAW project '{Name}'", name);
+        DawProjectResponse response = await _httpClient.PostJsonAsync<DawProjectResponse>("AudioLabLoadProject", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "DAW project load");
         return response;
     }
@@ -327,9 +312,9 @@ public class AudioLabEndpoint : IAudioLabEndpoint
     /// <inheritdoc />
     public async Task<DawProjectListResponse> ListProjectsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing DAW projects");
-        DawProjectListResponse response = await Internal.HttpClient.PostJsonAsync<DawProjectListResponse>("AudioLabListProjects", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Retrieved {ProjectCount} DAW project(s)", response.Projects.Length);
+        _logger.LogDebug("Listing DAW projects");
+        DawProjectListResponse response = await _httpClient.PostJsonAsync<DawProjectListResponse>("AudioLabListProjects", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {ProjectCount} DAW project(s)", response.Projects.Length);
         return response;
     }
 
@@ -344,16 +329,23 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         {
             ["name"] = name
         };
-        Internal.Logger.LogDebug("Deleting DAW project '{Name}'", name);
-        DawProjectDeleteResponse response = await Internal.HttpClient.PostJsonAsync<DawProjectDeleteResponse>("AudioLabDeleteProject", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting DAW project '{Name}'", name);
+        DawProjectDeleteResponse response = await _httpClient.PostJsonAsync<DawProjectDeleteResponse>("AudioLabDeleteProject", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "DAW project delete");
         return response;
     }
 
-    /// <summary>Parses a streamed engine install frame into a typed update.</summary>
-    private static AudioEngineInstallUpdate ParseInstallUpdate(JObject message)
+    /// <summary>Shared streaming core for engine install endpoints.</summary>
+    private async IAsyncEnumerable<AudioEngineInstallUpdate> StreamInstallCoreAsync(string endpoint, JObject payload, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        return message.ToObject<AudioEngineInstallUpdate>() ?? new AudioEngineInstallUpdate();
+        await foreach (JObject frame in _webSocketClient.StreamFramesAsync(endpoint, payload, _sessionKey, cancellationToken).ConfigureAwait(false))
+        {
+            AudioEngineInstallUpdate? update = frame.ToObject<AudioEngineInstallUpdate>();
+            if (update is not null)
+            {
+                yield return update;
+            }
+        }
     }
 
     /// <summary>Logs whether an AudioLab operation succeeded, using the shared response envelope.</summary>
@@ -361,11 +353,11 @@ public class AudioLabEndpoint : IAudioLabEndpoint
     {
         if (response.Success)
         {
-            Internal.Logger.LogInformation("{Operation} succeeded", operation);
+            _logger.LogInformation("{Operation} succeeded", operation);
         }
         else
         {
-            Internal.Logger.LogWarning("{Operation} failed: {Error} ({ErrorCode})", operation, response.Error ?? "Unknown error", response.ErrorCode ?? "no code");
+            _logger.LogWarning("{Operation} failed: {Error} ({ErrorCode})", operation, response.Error ?? "Unknown error", response.ErrorCode ?? "no code");
         }
     }
 }

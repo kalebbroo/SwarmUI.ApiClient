@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -7,158 +8,82 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Polly;
 using SwarmUI.ApiClient.Exceptions;
 using SwarmUI.ApiClient.Sessions;
 
 namespace SwarmUI.ApiClient.Http;
 
-/// <summary>Provides HTTP communication with the SwarmUI API.</summary>
-/// <remarks>Handles JSON serialization, session injection, basic retry, and error mapping. See CodingGuidelines.md (HTTP section) for details.</remarks>
+/// <summary>HTTP communication layer for the SwarmUI API.</summary>
+/// <remarks>Each request attempt (session acquisition → POST → single parse → error mapping) executes inside the configured resilience pipeline; on <c>invalid_session_id</c> the session is CAS-invalidated and the retry transparently acquires a fresh one, per the official API docs' mandated pattern.</remarks>
 public class SwarmHttpClient : ISwarmHttpClient
 {
-    public struct Impl
-    {
-        /// <summary> The HttpClient instance used for making requests.</summary>
-        public HttpClient HttpClient;
+    /// <summary>Payload keys whose values are masked or summarized before debug logging.</summary>
+    private static readonly HashSet<string> SecretKeys = new(StringComparer.OrdinalIgnoreCase) { "password", "new_password", "key", "authorization", "webhooksecret", "webhook_secret" };
 
-        /// <summary>Session manager used to obtain and invalidate session IDs.</summary>
-        public ISessionManager SessionManager;
+    /// <summary>Payload keys that carry large base64 blobs; replaced with a byte-count marker in debug logs.</summary>
+    private static readonly HashSet<string> BulkKeys = new(StringComparer.OrdinalIgnoreCase) { "image", "initimage", "preview", "maskimage", "audio" };
 
-        /// <summary>Logger for debugging HTTP requests and responses.</summary>
-        public ILogger<SwarmHttpClient> Logger;
-    }
+    private readonly Func<HttpClient> _httpClientProvider;
+    private readonly ISessionManager _sessionManager;
+    private readonly ResiliencePipeline _pipeline;
+    private readonly ILogger<SwarmHttpClient> _logger;
 
-    /// <summary>Internal implementation data.</summary>
-    public Impl Internal;
-
-    /// <summary>Creates a new SwarmHttpClient instance.</summary>
-    /// <param name="httpClient">Configured HttpClient instance.</param>
-    /// <param name="sessionManager">Session manager used for session_id injection.</param>
+    /// <summary>Creates a new SwarmHttpClient.</summary>
+    /// <param name="httpClientProvider">Provides the HttpClient per call. For DI hosts this should call IHttpClientFactory.CreateClient so handler rotation works; standalone clients return a fixed instance.</param>
+    /// <param name="sessionManager">Session pool used for session_id injection and invalidation.</param>
+    /// <param name="options">Client options used to build the resilience pipeline.</param>
     /// <param name="logger">Optional logger for HTTP diagnostics.</param>
-    public SwarmHttpClient(HttpClient httpClient, ISessionManager? sessionManager, ILogger<SwarmHttpClient>? logger = null)
+    public SwarmHttpClient(Func<HttpClient> httpClientProvider, ISessionManager sessionManager, SwarmClientOptions options, ILogger<SwarmHttpClient>? logger = null)
     {
-        Internal.HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        Internal.SessionManager = sessionManager!;
-        Internal.Logger = logger ?? NullLogger<SwarmHttpClient>.Instance;
+        _httpClientProvider = httpClientProvider ?? throw new ArgumentNullException(nameof(httpClientProvider));
+        _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
+        ArgumentNullException.ThrowIfNull(options);
+        _pipeline = SwarmResiliencePipelines.BuildHttpPipeline(options);
+        _logger = logger ?? NullLogger<SwarmHttpClient>.Instance;
     }
 
-    /// <summary>Sends a POST request to a SwarmUI API endpoint with an optional JSON payload.</summary>
-    /// <typeparam name="TResponse">The expected response type.</typeparam>
-    /// <param name="endpoint">API endpoint name without the /API/ prefix.</param>
-    /// <param name="payload">Optional payload; session_id is injected automatically unless the endpoint is "GetNewSession".</param>
-    /// <param name="cancellationToken">Cancellation token for the HTTP request.</param>
-    /// <returns>Deserialized response object.</returns>
-    /// <exception cref="SwarmSessionException">Thrown when the server returns error_id="invalid_session_id" after retry.</exception>
-    /// <exception cref="SwarmException">Thrown for other API or HTTP errors.</exception>
-    public async Task<TResponse> PostJsonAsync<TResponse>(string endpoint, object? payload = null, CancellationToken cancellationToken = default) where TResponse : class
+    /// <inheritdoc />
+    public async Task<TResponse> PostJsonAsync<TResponse>(string endpoint, object? payload = null, string sessionKey = SwarmSessionKeys.Default, CancellationToken cancellationToken = default) where TResponse : class
     {
-        try
+        if (string.IsNullOrEmpty(endpoint))
         {
-            return await PostJsonAsyncCore<TResponse>(endpoint, payload, cancellationToken).ConfigureAwait(false);
+            throw new ArgumentException("Endpoint cannot be null or empty", nameof(endpoint));
         }
-        catch (SwarmSessionException)
+        // Snapshot the payload once; each retry attempt re-clones from this so attempts never see each other's session_id.
+        JObject basePayload = payload switch
         {
-            Internal.Logger.LogInformation("Retrying request to {Endpoint} with fresh session after session expiration", endpoint);
-            try
-            {
-                return await PostJsonAsyncCore<TResponse>(endpoint, payload, cancellationToken).ConfigureAwait(false);
-            }
-            catch (SwarmSessionException retryEx)
-            {
-                Internal.Logger.LogError("Retry failed for {Endpoint}: {Message}", endpoint, retryEx.Message);
-                throw;
-            }
-        }
+            null => [],
+            JObject jObject => jObject,
+            _ => JObject.FromObject(payload)
+        };
+        return await _pipeline.ExecuteAsync(
+            async (state, ct) => await state.self.ExecuteAttemptAsync<TResponse>(state.endpoint, state.basePayload, state.sessionKey, ct).ConfigureAwait(false),
+            (self: this, endpoint, basePayload, sessionKey),
+            cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Core implementation of PostJsonAsync without retry logic.</summary>
-    private async Task<TResponse> PostJsonAsyncCore<TResponse>(string endpoint, object? payload, CancellationToken cancellationToken) where TResponse : class
+    /// <summary>One complete request attempt: session fetch, POST, single-parse, error mapping, deserialization.</summary>
+    private async Task<TResponse> ExecuteAttemptAsync<TResponse>(string endpoint, JObject basePayload, string sessionKey, CancellationToken cancellationToken) where TResponse : class
     {
-        JObject payloadJson;
-        if (payload is null)
-        {
-            payloadJson = [];
-        }
-        else if (payload is JObject existingJObject)
-        {
-            payloadJson = existingJObject;
-        }
-        else
-        {
-            payloadJson = JObject.FromObject(payload);
-        }
+        JObject payloadJson = (JObject)basePayload.DeepClone();
         bool needsSession = !string.Equals(endpoint, "GetNewSession", StringComparison.OrdinalIgnoreCase);
+        string? sessionId = null;
         if (needsSession)
         {
-            string sessionId = await Internal.SessionManager.GetOrCreateSessionAsync(cancellationToken).ConfigureAwait(false);
+            sessionId = await _sessionManager.GetOrCreateSessionAsync(sessionKey, cancellationToken).ConfigureAwait(false);
             payloadJson["session_id"] = sessionId;
         }
         string payloadString = payloadJson.ToString(Formatting.None);
-        if (payloadString.Length > 500)
+        if (_logger.IsEnabled(LogLevel.Debug))
         {
-            Internal.Logger.LogDebug("POST /API/{Endpoint}: {Payload}...", endpoint, payloadString.Substring(0, 497) + "...");
+            _logger.LogDebug("POST /API/{Endpoint}: {Payload}", endpoint, RedactForLog(payloadJson));
         }
-        else
-        {
-            Internal.Logger.LogDebug("POST /API/{Endpoint}: {Payload}", endpoint, payloadString);
-        }
-        StringContent content = new(payloadString, Encoding.UTF8, "application/json");
-        HttpResponseMessage response = await Internal.HttpClient.PostAsync($"/API/{endpoint}", content, cancellationToken).ConfigureAwait(false);
+        using StringContent content = new(payloadString, Encoding.UTF8, "application/json");
+        HttpClient httpClient = _httpClientProvider();
+        using HttpResponseMessage response = await httpClient.PostAsync($"/API/{endpoint}", content, cancellationToken).ConfigureAwait(false);
         string responseText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (responseText.Length > 1000)
-        {
-            Internal.Logger.LogDebug("Response ({StatusCode}): {Response}...", response.StatusCode, responseText.Substring(0, 997) + "...");
-        }
-        else
-        {
-            Internal.Logger.LogDebug("Response ({StatusCode}): {Response}", response.StatusCode, responseText);
-        }
-        await HandleErrorResponseAsync(response, responseText).ConfigureAwait(false);
-        try
-        {
-            TResponse? result = JsonConvert.DeserializeObject<TResponse>(responseText);
-            if (result is null)
-            {
-                throw new SwarmException($"API returned null response for endpoint {endpoint}");
-            }
-            return result;
-        }
-        catch (JsonException ex)
-        {
-            Internal.Logger.LogError(ex, "Failed to deserialize response from {Endpoint}", endpoint);
-            throw new SwarmException($"Failed to parse response from {endpoint}. Response may be in unexpected format.", ex);
-        }
-    }
-
-    /// <summary>Sends a POST request to a SwarmUI API endpoint with a strongly typed request object.</summary>
-    /// <typeparam name="TRequest">The request model type.</typeparam>
-    /// <typeparam name="TResponse">The expected response type.</typeparam>
-    /// <param name="endpoint">API endpoint name without the /API/ prefix.</param>
-    /// <param name="request">The request object to serialize and send.</param>
-    /// <param name="cancellationToken">Cancellation token for the HTTP request.</param>
-    /// <returns>Deserialized response object.</returns>
-    /// <exception cref="SwarmSessionException">Thrown when the server returns error_id="invalid_session_id".</exception>
-    /// <exception cref="SwarmException">Thrown for other API or HTTP errors.</exception>
-    public async Task<TResponse> PostJsonAsync<TRequest, TResponse>(string endpoint, TRequest request, CancellationToken cancellationToken = default)
-        where TRequest : class where TResponse : class
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        JObject requestJson = JObject.FromObject(request);
-        return await PostJsonAsync<TResponse>(endpoint, requestJson, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>Handles error responses from the SwarmUI API by parsing error structures and throwing appropriate exception types.</summary>
-    /// <param name="response">The HTTP response message to check for errors.</param>
-    /// <param name="responseText">The response body text (already read from response.Content).</param>
-    /// <exception cref="SwarmSessionException">
-    /// Thrown when error_id="invalid_session_id". Session is invalidated automatically.
-    /// </exception>
-    /// <exception cref="SwarmException">
-    /// Thrown for all other error conditions with appropriate error_id and message.
-    /// </exception>
-    /// <remarks>See CodingGuidelines.md (HTTP section) for error-handling scenarios.</remarks>
-    private async Task HandleErrorResponseAsync(HttpResponseMessage response, string responseText)
-    {
+        // Parse exactly once; error mapping and result extraction share this JObject.
         JObject? responseJson = null;
         try
         {
@@ -167,9 +92,47 @@ public class SwarmHttpClient : ISwarmHttpClient
                 responseJson = JObject.Parse(responseText);
             }
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            if (!response.IsSuccessStatusCode)
+            {
+                // Non-JSON error body (e.g. HTML 502 from a reverse proxy) — keep the evidence.
+                throw new SwarmHttpException(response.StatusCode, $"HTTP request to {endpoint} failed with status {(int)response.StatusCode} {response.ReasonPhrase} and a non-JSON body", Snippet(responseText), ex);
+            }
+            throw new SwarmException($"Failed to parse response from {endpoint}. Response may be in unexpected format.", ex);
         }
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug("Response ({StatusCode}) from {Endpoint}: {Response}", (int)response.StatusCode, endpoint, responseJson is null ? Snippet(responseText) : RedactForLog(responseJson));
+        }
+        MapError(endpoint, response, responseJson, responseText, sessionKey, sessionId);
+        if (responseJson is null)
+        {
+            throw new SwarmException($"API returned an empty response for endpoint {endpoint}");
+        }
+        if (typeof(TResponse) == typeof(JObject))
+        {
+            return (TResponse)(object)responseJson;
+        }
+        try
+        {
+            TResponse? result = responseJson.ToObject<TResponse>();
+            if (result is null)
+            {
+                throw new SwarmException($"API returned null response for endpoint {endpoint}");
+            }
+            return result;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize response from {Endpoint}", endpoint);
+            throw new SwarmException($"Failed to parse response from {endpoint}. Response may be in unexpected format.", ex);
+        }
+    }
+
+    /// <summary>Maps SwarmUI error bodies and transport failures to the exception hierarchy. Session rejections CAS-invalidate the pooled session before throwing so the retry gets a fresh one.</summary>
+    private void MapError(string endpoint, HttpResponseMessage response, JObject? responseJson, string responseText, string sessionKey, string? sessionId)
+    {
         if (responseJson is not null)
         {
             string? errorId = responseJson["error_id"]?.ToString();
@@ -178,24 +141,64 @@ public class SwarmHttpClient : ISwarmHttpClient
             {
                 if (string.Equals(errorId, "invalid_session_id", StringComparison.OrdinalIgnoreCase))
                 {
-                    Internal.Logger.LogWarning("Session invalidated by server: {Message}", errorMessage);
-                    Internal.SessionManager.InvalidateSession();
-                    throw new SwarmSessionException(errorMessage ?? "Session ID is invalid or expired. A new session will be created on the next request.");
+                    _logger.LogWarning("Session rejected by server for key '{Key}': {Message}", sessionKey, errorMessage);
+                    _sessionManager.InvalidateSession(sessionKey, sessionId);
+                    throw new SwarmSessionException(errorMessage ?? "Session ID is invalid or expired.");
                 }
                 string message = errorMessage ?? $"API error: {errorId}";
-                Internal.Logger.LogError("SwarmUI API error: {ErrorId} - {Message}", errorId, message);
+                _logger.LogError("SwarmUI API error from {Endpoint}: {ErrorId} - {Message}", endpoint, errorId, message);
                 throw new SwarmException(message, errorId);
             }
         }
         if (!response.IsSuccessStatusCode)
         {
-            string message = $"HTTP request failed with status {(int)response.StatusCode} {response.ReasonPhrase}";
-            if (!string.IsNullOrWhiteSpace(responseText))
-            {
-                message += $": {responseText}";
-            }
-            Internal.Logger.LogError("HTTP error: {StatusCode} {ReasonPhrase}", response.StatusCode, response.ReasonPhrase);
-            throw new SwarmException(message);
+            _logger.LogError("HTTP error from {Endpoint}: {StatusCode} {ReasonPhrase}", endpoint, (int)response.StatusCode, response.ReasonPhrase);
+            throw new SwarmHttpException(response.StatusCode, $"HTTP request to {endpoint} failed with status {(int)response.StatusCode} {response.ReasonPhrase}", Snippet(responseText));
         }
     }
+
+    /// <summary>Produces a redacted, size-bounded rendering of a payload for debug logs: secrets masked, session ids truncated, bulk base64 fields replaced by byte counts.</summary>
+    internal static string RedactForLog(JObject payload)
+    {
+        JObject clone = (JObject)payload.DeepClone();
+        RedactInPlace(clone);
+        string text = clone.ToString(Formatting.None);
+        return text.Length > 2000 ? text[..2000] + "..." : text;
+    }
+
+    private static void RedactInPlace(JToken token)
+    {
+        if (token is JObject obj)
+        {
+            foreach (JProperty property in obj.Properties())
+            {
+                if (SecretKeys.Contains(property.Name))
+                {
+                    property.Value = "***";
+                }
+                else if (property.Name.Equals("session_id", StringComparison.OrdinalIgnoreCase) && property.Value.Type == JTokenType.String)
+                {
+                    string id = property.Value.ToString();
+                    property.Value = id.Length > 8 ? id[..8] + "..." : id;
+                }
+                else if (BulkKeys.Contains(property.Name) && property.Value.Type == JTokenType.String && property.Value.ToString().Length > 256)
+                {
+                    property.Value = $"<{property.Value.ToString().Length} chars>";
+                }
+                else
+                {
+                    RedactInPlace(property.Value);
+                }
+            }
+        }
+        else if (token is JArray array)
+        {
+            foreach (JToken item in array)
+            {
+                RedactInPlace(item);
+            }
+        }
+    }
+
+    private static string Snippet(string text) => string.IsNullOrEmpty(text) ? "" : text.Length > 500 ? text[..500] + "..." : text;
 }

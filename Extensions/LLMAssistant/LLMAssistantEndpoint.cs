@@ -78,39 +78,25 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         }
     };
 
-    /// <summary>Internal implementation data containing dependencies.</summary>
-    public struct Impl
-    {
-        /// <summary>HTTP client for making API requests with automatic session injection.</summary>
-        public ISwarmHttpClient HttpClient;
-
-        /// <summary>WebSocket client for streaming chat operations.</summary>
-        public ISwarmWebSocketClient WebSocketClient;
-
-        /// <summary>Session manager for obtaining session IDs (used indirectly via HttpClient).</summary>
-        public ISessionManager SessionManager;
-
-        /// <summary>Logger for endpoint operations.</summary>
-        public ILogger<LLMAssistantEndpoint> Logger;
-    }
-
-    /// <summary>Internal implementation data for advanced scenarios; normal usage should use the public members.</summary>
-    public Impl Internal;
+    private readonly ISwarmHttpClient _httpClient;
+    private readonly ISwarmWebSocketClient _webSocketClient;
+    private readonly string _sessionKey;
+    private readonly ILogger<LLMAssistantEndpoint> _logger;
 
     /// <inheritdoc />
     public SwarmExtensionInfo Extension => ExtensionInfo;
 
-    /// <summary>Creates a new LLMAssistantEndpoint instance with the specified dependencies.</summary>
-    /// <param name="httpClient">HTTP client for API requests. Must not be null.</param>
-    /// <param name="webSocketClient">WebSocket client for streaming chat operations. Must not be null.</param>
-    /// <param name="sessionManager">Session manager for session lifecycle. Must not be null.</param>
-    /// <param name="logger">Optional logger for operations. Uses NullLogger if null.</param>
-    public LLMAssistantEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, ISessionManager sessionManager, ILogger<LLMAssistantEndpoint>? logger = null)
+    /// <summary>Creates a new LLMAssistantEndpoint.</summary>
+    /// <param name="httpClient">HTTP client for API requests.</param>
+    /// <param name="webSocketClient">WebSocket client for streaming chat operations.</param>
+    /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
+    /// <param name="logger">Optional logger.</param>
+    public LLMAssistantEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, string sessionKey, ILogger<LLMAssistantEndpoint>? logger = null)
     {
-        Internal.HttpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        Internal.WebSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
-        Internal.SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
-        Internal.Logger = logger ?? NullLogger<LLMAssistantEndpoint>.Instance;
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _webSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
+        _sessionKey = sessionKey ?? throw new ArgumentNullException(nameof(sessionKey));
+        _logger = logger ?? NullLogger<LLMAssistantEndpoint>.Instance;
     }
 
     /// <inheritdoc />
@@ -121,8 +107,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("Message cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Requesting completion with model '{Model}' ({CharCount} chars)", request.Model ?? "(server default)", request.Message.Length);
-        ChatCompletionResponse response = await Internal.HttpClient.PostJsonAsync<ChatCompletionRequest, ChatCompletionResponse>("LLMAssistantSendMessage", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Requesting completion with model '{Model}' ({CharCount} chars)", request.Model ?? "(server default)", request.Message.Length);
+        ChatCompletionResponse response = await _httpClient.PostJsonAsync<ChatCompletionResponse>("LLMAssistantSendMessage", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Completion");
         return response;
     }
@@ -132,7 +118,7 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     {
         ArgumentNullException.ThrowIfNull(request);
         RequireThreadId(request.ThreadId);
-        Internal.Logger.LogDebug("Streaming chat message into thread '{ThreadId}'", request.ThreadId);
+        _logger.LogDebug("Streaming chat message into thread '{ThreadId}'", request.ThreadId);
         return StreamChatAsync("LLMAssistantSendMessageWS", request, cancellationToken);
     }
 
@@ -149,7 +135,7 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("Content is required when editing a message", nameof(request));
         }
-        Internal.Logger.LogDebug("Streaming edit of message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
+        _logger.LogDebug("Streaming edit of message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
         return StreamChatAsync("LLMAssistantEditMessageWS", request, cancellationToken);
     }
 
@@ -162,7 +148,7 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("MessageId is required when regenerating a reply", nameof(request));
         }
-        Internal.Logger.LogDebug("Streaming regeneration of message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
+        _logger.LogDebug("Streaming regeneration of message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
         return StreamChatAsync("LLMAssistantRegenerateWS", request, cancellationToken);
     }
 
@@ -178,8 +164,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             payload["title"] = title;
         }
-        Internal.Logger.LogDebug("Creating chat thread for assistant '{AssistantId}'", assistantId ?? "(active)");
-        ThreadResponse response = await Internal.HttpClient.PostJsonAsync<ThreadResponse>("LLMAssistantCreateThread", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Creating chat thread for assistant '{AssistantId}'", assistantId ?? "(active)");
+        ThreadResponse response = await _httpClient.PostJsonAsync<ThreadResponse>("LLMAssistantCreateThread", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Thread creation");
         return response;
     }
@@ -196,8 +182,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("SampleInput cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Testing instruction against sample input with model '{Model}'", request.Model ?? "(server default)");
-        ChatCompletionResponse response = await Internal.HttpClient.PostJsonAsync<TestInstructionRequest, ChatCompletionResponse>("LLMAssistantTestInstruction", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Testing instruction against sample input with model '{Model}'", request.Model ?? "(server default)");
+        ChatCompletionResponse response = await _httpClient.PostJsonAsync<ChatCompletionResponse>("LLMAssistantTestInstruction", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Instruction test");
         return response;
     }
@@ -215,8 +201,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("ImageData cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Uploading chat image for message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
-        UploadChatImageResponse response = await Internal.HttpClient.PostJsonAsync<UploadChatImageRequest, UploadChatImageResponse>("LLMAssistantUploadChatImage", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Uploading chat image for message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
+        UploadChatImageResponse response = await _httpClient.PostJsonAsync<UploadChatImageResponse>("LLMAssistantUploadChatImage", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Chat image upload");
         return response;
     }
@@ -225,23 +211,23 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<CountTokensResponse> CountTokensAsync(CountTokensRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        Internal.Logger.LogDebug("Counting tokens");
-        return await Internal.HttpClient.PostJsonAsync<CountTokensRequest, CountTokensResponse>("LLMAssistantCountTokens", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Counting tokens");
+        return await _httpClient.PostJsonAsync<CountTokensResponse>("LLMAssistantCountTokens", request, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<LLMSettingsResponse> GetSettingsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading LLM Assistant settings");
-        return await Internal.HttpClient.PostJsonAsync<LLMSettingsResponse>("LLMAssistantGetSettings", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading LLM Assistant settings");
+        return await _httpClient.PostJsonAsync<LLMSettingsResponse>("LLMAssistantGetSettings", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<LLMSettingsResponse> SaveSettingsAsync(SaveSettingsRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        Internal.Logger.LogDebug("Saving LLM Assistant settings to '{Scope}' layer", request.Scope ?? "personal");
-        LLMSettingsResponse response = await Internal.HttpClient.PostJsonAsync<SaveSettingsRequest, LLMSettingsResponse>("LLMAssistantSaveSettings", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Saving LLM Assistant settings to '{Scope}' layer", request.Scope ?? "personal");
+        LLMSettingsResponse response = await _httpClient.PostJsonAsync<LLMSettingsResponse>("LLMAssistantSaveSettings", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Settings save");
         return response;
     }
@@ -254,8 +240,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             payload["scope"] = scope;
         }
-        Internal.Logger.LogDebug("Resetting LLM Assistant settings in '{Scope}' layer", scope ?? "personal");
-        LLMSettingsResponse response = await Internal.HttpClient.PostJsonAsync<LLMSettingsResponse>("LLMAssistantResetSettings", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Resetting LLM Assistant settings in '{Scope}' layer", scope ?? "personal");
+        LLMSettingsResponse response = await _httpClient.PostJsonAsync<LLMSettingsResponse>("LLMAssistantResetSettings", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Settings reset");
         return response;
     }
@@ -268,8 +254,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             payload["max"] = max.Value;
         }
-        Internal.Logger.LogDebug("Reading LLM Assistant audit log");
-        return await Internal.HttpClient.PostJsonAsync<AuditLogResponse>("LLMAssistantGetAuditLog", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading LLM Assistant audit log");
+        return await _httpClient.PostJsonAsync<AuditLogResponse>("LLMAssistantGetAuditLog", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -279,8 +265,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             ["enabled"] = enabled
         };
-        Internal.Logger.LogDebug("Setting LLM Assistant audit log enabled to {Enabled}", enabled);
-        AuditLogResponse response = await Internal.HttpClient.PostJsonAsync<AuditLogResponse>("LLMAssistantSetAuditLogEnabled", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Setting LLM Assistant audit log enabled to {Enabled}", enabled);
+        AuditLogResponse response = await _httpClient.PostJsonAsync<AuditLogResponse>("LLMAssistantSetAuditLogEnabled", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Audit log toggle");
         return response;
     }
@@ -288,16 +274,16 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<LLMModelsResponse> GetModelsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing LLM models");
-        LLMModelsResponse response = await Internal.HttpClient.PostJsonAsync<LLMModelsResponse>("LLMAssistantGetModels", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Listing LLM models");
+        LLMModelsResponse response = await _httpClient.PostJsonAsync<LLMModelsResponse>("LLMAssistantGetModels", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
         if (response.Warnings.Length > 0)
         {
-            Internal.Logger.LogWarning("Retrieved {ModelCount} LLM model(s) with {WarningCount} provider warning(s): {Warnings}",
+            _logger.LogWarning("Retrieved {ModelCount} LLM model(s) with {WarningCount} provider warning(s): {Warnings}",
                 response.Models.Count, response.Warnings.Length, string.Join("; ", response.Warnings));
         }
         else
         {
-            Internal.Logger.LogInformation("Retrieved {ModelCount} LLM model(s)", response.Models.Count);
+            _logger.LogInformation("Retrieved {ModelCount} LLM model(s)", response.Models.Count);
         }
         return response;
     }
@@ -305,18 +291,18 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<UnloadModelsResponse> UnloadModelsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Unloading LLM models");
-        UnloadModelsResponse response = await Internal.HttpClient.PostJsonAsync<UnloadModelsResponse>("LLMAssistantUnloadModels", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Unloaded models on {Freed}/{Providers} provider(s)", response.Freed, response.Providers);
+        _logger.LogDebug("Unloading LLM models");
+        UnloadModelsResponse response = await _httpClient.PostJsonAsync<UnloadModelsResponse>("LLMAssistantUnloadModels", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Unloaded models on {Freed}/{Providers} provider(s)", response.Freed, response.Providers);
         return response;
     }
 
     /// <inheritdoc />
     public async Task<ThreadListResponse> GetThreadsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing chat threads");
-        ThreadListResponse response = await Internal.HttpClient.PostJsonAsync<ThreadListResponse>("LLMAssistantGetThreads", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Retrieved {ThreadCount} chat thread(s)", response.Threads.Count);
+        _logger.LogDebug("Listing chat threads");
+        ThreadListResponse response = await _httpClient.PostJsonAsync<ThreadListResponse>("LLMAssistantGetThreads", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {ThreadCount} chat thread(s)", response.Threads.Count);
         return response;
     }
 
@@ -324,16 +310,16 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<ThreadResponse> GetThreadAsync(string threadId, CancellationToken cancellationToken = default)
     {
         RequireThreadId(threadId);
-        Internal.Logger.LogDebug("Reading chat thread '{ThreadId}'", threadId);
-        return await Internal.HttpClient.PostJsonAsync<ThreadResponse>("LLMAssistantGetThread", ThreadPayload(threadId), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading chat thread '{ThreadId}'", threadId);
+        return await _httpClient.PostJsonAsync<ThreadResponse>("LLMAssistantGetThread", ThreadPayload(threadId), _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<LLMAssistantResponse> DeleteThreadAsync(string threadId, CancellationToken cancellationToken = default)
     {
         RequireThreadId(threadId);
-        Internal.Logger.LogDebug("Deleting chat thread '{ThreadId}'", threadId);
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteThread", ThreadPayload(threadId), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting chat thread '{ThreadId}'", threadId);
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteThread", ThreadPayload(threadId), _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Thread delete");
         return response;
     }
@@ -351,8 +337,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             ["threadId"] = threadId,
             ["title"] = title
         };
-        Internal.Logger.LogDebug("Renaming chat thread '{ThreadId}'", threadId);
-        ThreadResponse response = await Internal.HttpClient.PostJsonAsync<ThreadResponse>("LLMAssistantRenameThread", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Renaming chat thread '{ThreadId}'", threadId);
+        ThreadResponse response = await _httpClient.PostJsonAsync<ThreadResponse>("LLMAssistantRenameThread", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Thread rename");
         return response;
     }
@@ -367,8 +353,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             ["threadId"] = threadId,
             ["messageId"] = messageId
         };
-        Internal.Logger.LogDebug("Setting active leaf of thread '{ThreadId}' to message '{MessageId}'", threadId, messageId);
-        ThreadResponse response = await Internal.HttpClient.PostJsonAsync<ThreadResponse>("LLMAssistantSetActiveLeaf", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Setting active leaf of thread '{ThreadId}' to message '{MessageId}'", threadId, messageId);
+        ThreadResponse response = await _httpClient.PostJsonAsync<ThreadResponse>("LLMAssistantSetActiveLeaf", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Active leaf change");
         return response;
     }
@@ -385,8 +371,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             payload["enabled"] = enabled.Value;
         }
-        Internal.Logger.LogDebug("Setting tool override on thread '{ThreadId}' to {Enabled}", threadId, enabled?.ToString() ?? "(inherit)");
-        ThreadToolsEnabledResponse response = await Internal.HttpClient.PostJsonAsync<ThreadToolsEnabledResponse>("LLMAssistantSetThreadToolsEnabled", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Setting tool override on thread '{ThreadId}' to {Enabled}", threadId, enabled?.ToString() ?? "(inherit)");
+        ThreadToolsEnabledResponse response = await _httpClient.PostJsonAsync<ThreadToolsEnabledResponse>("LLMAssistantSetThreadToolsEnabled", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Thread tool override");
         return response;
     }
@@ -401,8 +387,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             ["threadId"] = threadId,
             ["messageId"] = messageId
         };
-        Internal.Logger.LogDebug("Deleting message '{MessageId}' from thread '{ThreadId}'", messageId, threadId);
-        ThreadResponse response = await Internal.HttpClient.PostJsonAsync<ThreadResponse>("LLMAssistantDeleteMessage", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting message '{MessageId}' from thread '{ThreadId}'", messageId, threadId);
+        ThreadResponse response = await _httpClient.PostJsonAsync<ThreadResponse>("LLMAssistantDeleteMessage", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Message delete");
         return response;
     }
@@ -413,8 +399,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         ArgumentNullException.ThrowIfNull(request);
         RequireThreadId(request.ThreadId);
         RequireMessageId(request.MessageId);
-        Internal.Logger.LogDebug("Editing message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
-        ThreadResponse response = await Internal.HttpClient.PostJsonAsync<EditMessageRequest, ThreadResponse>("LLMAssistantEditMessage", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Editing message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
+        ThreadResponse response = await _httpClient.PostJsonAsync<ThreadResponse>("LLMAssistantEditMessage", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Message edit");
         return response;
     }
@@ -428,8 +414,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             ["threadId"] = threadId,
             ["format"] = format
         };
-        Internal.Logger.LogDebug("Exporting thread '{ThreadId}' as '{Format}'", threadId, format);
-        ThreadExportResponse response = await Internal.HttpClient.PostJsonAsync<ThreadExportResponse>("LLMAssistantExportThread", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Exporting thread '{ThreadId}' as '{Format}'", threadId, format);
+        ThreadExportResponse response = await _httpClient.PostJsonAsync<ThreadExportResponse>("LLMAssistantExportThread", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Thread export");
         return response;
     }
@@ -437,8 +423,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<SessionStateResponse> GetSessionStateAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading LLM Assistant session state");
-        return await Internal.HttpClient.PostJsonAsync<SessionStateResponse>("LLMAssistantGetSessionState", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading LLM Assistant session state");
+        return await _httpClient.PostJsonAsync<SessionStateResponse>("LLMAssistantGetSessionState", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -449,8 +435,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             ["state"] = state
         };
-        Internal.Logger.LogDebug("Patching LLM Assistant session state");
-        SessionStateResponse response = await Internal.HttpClient.PostJsonAsync<SessionStateResponse>("LLMAssistantSetSessionState", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Patching LLM Assistant session state");
+        SessionStateResponse response = await _httpClient.PostJsonAsync<SessionStateResponse>("LLMAssistantSetSessionState", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Session state patch");
         return response;
     }
@@ -459,8 +445,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<AssetListResponse> GetAssetsAsync(string threadId, CancellationToken cancellationToken = default)
     {
         RequireThreadId(threadId);
-        Internal.Logger.LogDebug("Listing assets for thread '{ThreadId}'", threadId);
-        return await Internal.HttpClient.PostJsonAsync<AssetListResponse>("LLMAssistantGetAssets", ThreadPayload(threadId), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Listing assets for thread '{ThreadId}'", threadId);
+        return await _httpClient.PostJsonAsync<AssetListResponse>("LLMAssistantGetAssets", ThreadPayload(threadId), _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -476,8 +462,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             ["threadId"] = threadId,
             ["assetId"] = assetId
         };
-        Internal.Logger.LogDebug("Reading asset '{AssetId}' from thread '{ThreadId}'", assetId, threadId);
-        return await Internal.HttpClient.PostJsonAsync<AssetResponse>("LLMAssistantGetAsset", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading asset '{AssetId}' from thread '{ThreadId}'", assetId, threadId);
+        return await _httpClient.PostJsonAsync<AssetResponse>("LLMAssistantGetAsset", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -493,8 +479,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             ["threadId"] = threadId,
             ["assetId"] = assetId
         };
-        Internal.Logger.LogDebug("Deleting asset '{AssetId}' from thread '{ThreadId}'", assetId, threadId);
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteAsset", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting asset '{AssetId}' from thread '{ThreadId}'", assetId, threadId);
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteAsset", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Asset delete");
         return response;
     }
@@ -502,8 +488,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<InstructionListResponse> GetInstructionsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing instructions");
-        return await Internal.HttpClient.PostJsonAsync<InstructionListResponse>("LLMAssistantGetInstructions", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Listing instructions");
+        return await _httpClient.PostJsonAsync<InstructionListResponse>("LLMAssistantGetInstructions", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -514,8 +500,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("Content cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Saving instruction '{Id}' to '{Scope}' layer", request.Id ?? "(new)", request.Scope ?? "personal");
-        ScopedWriteResponse response = await Internal.HttpClient.PostJsonAsync<SaveInstructionRequest, ScopedWriteResponse>("LLMAssistantSaveInstruction", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Saving instruction '{Id}' to '{Scope}' layer", request.Id ?? "(new)", request.Scope ?? "personal");
+        ScopedWriteResponse response = await _httpClient.PostJsonAsync<ScopedWriteResponse>("LLMAssistantSaveInstruction", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Instruction save");
         return response;
     }
@@ -527,8 +513,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("Instruction ID cannot be null or empty", nameof(id));
         }
-        Internal.Logger.LogDebug("Deleting instruction '{Id}'", id);
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteInstruction", ScopedIdPayload("id", id, scope), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting instruction '{Id}'", id);
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteInstruction", ScopedIdPayload("id", id, scope), _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Instruction delete");
         return response;
     }
@@ -536,9 +522,9 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<AssistantListResponse> GetAssistantsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing assistants");
-        AssistantListResponse response = await Internal.HttpClient.PostJsonAsync<AssistantListResponse>("LLMAssistantGetAssistants", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Retrieved {AssistantCount} assistant(s)", response.Assistants.Count);
+        _logger.LogDebug("Listing assistants");
+        AssistantListResponse response = await _httpClient.PostJsonAsync<AssistantListResponse>("LLMAssistantGetAssistants", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {AssistantCount} assistant(s)", response.Assistants.Count);
         return response;
     }
 
@@ -550,15 +536,15 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             ["assistantId"] = assistantId
         };
-        Internal.Logger.LogDebug("Reading assistant '{AssistantId}'", assistantId);
-        return await Internal.HttpClient.PostJsonAsync<AssistantResponse>("LLMAssistantGetAssistant", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading assistant '{AssistantId}'", assistantId);
+        return await _httpClient.PostJsonAsync<AssistantResponse>("LLMAssistantGetAssistant", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<AssistantResponse> GetActiveAssistantAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading active assistant");
-        return await Internal.HttpClient.PostJsonAsync<AssistantResponse>("LLMAssistantGetActiveAssistant", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading active assistant");
+        return await _httpClient.PostJsonAsync<AssistantResponse>("LLMAssistantGetActiveAssistant", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -569,8 +555,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("Assistant data cannot be empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Saving assistant to '{Scope}' layer", request.Scope ?? "personal");
-        ScopedWriteResponse response = await Internal.HttpClient.PostJsonAsync<SaveAssistantRequest, ScopedWriteResponse>("LLMAssistantSaveAssistant", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Saving assistant to '{Scope}' layer", request.Scope ?? "personal");
+        ScopedWriteResponse response = await _httpClient.PostJsonAsync<ScopedWriteResponse>("LLMAssistantSaveAssistant", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Assistant save");
         return response;
     }
@@ -579,8 +565,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<LLMAssistantResponse> DeleteAssistantAsync(string assistantId, string? scope = null, CancellationToken cancellationToken = default)
     {
         RequireAssistantId(assistantId);
-        Internal.Logger.LogDebug("Deleting assistant '{AssistantId}'", assistantId);
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteAssistant", ScopedIdPayload("assistantId", assistantId, scope), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting assistant '{AssistantId}'", assistantId);
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteAssistant", ScopedIdPayload("assistantId", assistantId, scope), _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Assistant delete");
         return response;
     }
@@ -593,8 +579,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             ["assistantId"] = assistantId
         };
-        Internal.Logger.LogDebug("Setting active assistant to '{AssistantId}'", assistantId);
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantSetActiveAssistant", payload, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Setting active assistant to '{AssistantId}'", assistantId);
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantSetActiveAssistant", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Active assistant change");
         return response;
     }
@@ -608,8 +594,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("ImageData cannot be null or empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Uploading avatar for assistant '{AssistantId}'", request.AssistantId);
-        UploadAssistantAvatarResponse response = await Internal.HttpClient.PostJsonAsync<UploadAssistantAvatarRequest, UploadAssistantAvatarResponse>("LLMAssistantUploadAssistantAvatar", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Uploading avatar for assistant '{AssistantId}'", request.AssistantId);
+        UploadAssistantAvatarResponse response = await _httpClient.PostJsonAsync<UploadAssistantAvatarResponse>("LLMAssistantUploadAssistantAvatar", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Avatar upload");
         return response;
     }
@@ -617,16 +603,16 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<StarterTemplatesResponse> GetStarterTemplatesAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading starter assistant templates");
-        return await Internal.HttpClient.PostJsonAsync<StarterTemplatesResponse>("LLMAssistantGetStarterTemplates", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading starter assistant templates");
+        return await _httpClient.PostJsonAsync<StarterTemplatesResponse>("LLMAssistantGetStarterTemplates", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<ToolListResponse> GetToolsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing tools");
-        ToolListResponse response = await Internal.HttpClient.PostJsonAsync<ToolListResponse>("LLMAssistantGetTools", payload: null, cancellationToken).ConfigureAwait(false);
-        Internal.Logger.LogInformation("Retrieved {ToolCount} tool(s)", response.Tools.Count);
+        _logger.LogDebug("Listing tools");
+        ToolListResponse response = await _httpClient.PostJsonAsync<ToolListResponse>("LLMAssistantGetTools", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Retrieved {ToolCount} tool(s)", response.Tools.Count);
         return response;
     }
 
@@ -634,8 +620,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<ToolResponse> GetToolAsync(string toolId, CancellationToken cancellationToken = default)
     {
         RequireToolId(toolId);
-        Internal.Logger.LogDebug("Reading tool '{ToolId}'", toolId);
-        return await Internal.HttpClient.PostJsonAsync<ToolResponse>("LLMAssistantGetTool", ToolPayload(toolId), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading tool '{ToolId}'", toolId);
+        return await _httpClient.PostJsonAsync<ToolResponse>("LLMAssistantGetTool", ToolPayload(toolId), _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -646,8 +632,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         {
             throw new ArgumentException("Tool data cannot be empty", nameof(request));
         }
-        Internal.Logger.LogDebug("Saving tool to '{Scope}' layer", request.Scope ?? "personal");
-        ScopedWriteResponse response = await Internal.HttpClient.PostJsonAsync<SaveToolRequest, ScopedWriteResponse>("LLMAssistantSaveTool", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Saving tool to '{Scope}' layer", request.Scope ?? "personal");
+        ScopedWriteResponse response = await _httpClient.PostJsonAsync<ScopedWriteResponse>("LLMAssistantSaveTool", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Tool save");
         return response;
     }
@@ -656,8 +642,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<LLMAssistantResponse> DeleteToolAsync(string toolId, string? scope = null, CancellationToken cancellationToken = default)
     {
         RequireToolId(toolId);
-        Internal.Logger.LogDebug("Deleting tool '{ToolId}'", toolId);
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteTool", ScopedIdPayload("toolId", toolId, scope), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Deleting tool '{ToolId}'", toolId);
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantDeleteTool", ScopedIdPayload("toolId", toolId, scope), _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Tool delete");
         return response;
     }
@@ -666,8 +652,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     public async Task<ToolConfigResponse> GetToolConfigAsync(string toolId, CancellationToken cancellationToken = default)
     {
         RequireToolId(toolId);
-        Internal.Logger.LogDebug("Reading config for tool '{ToolId}'", toolId);
-        return await Internal.HttpClient.PostJsonAsync<ToolConfigResponse>("LLMAssistantGetToolConfig", ToolPayload(toolId), cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading config for tool '{ToolId}'", toolId);
+        return await _httpClient.PostJsonAsync<ToolConfigResponse>("LLMAssistantGetToolConfig", ToolPayload(toolId), _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -675,8 +661,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     {
         ArgumentNullException.ThrowIfNull(request);
         RequireToolId(request.ToolId);
-        Internal.Logger.LogDebug("Setting config for tool '{ToolId}'", request.ToolId);
-        ToolConfigResponse response = await Internal.HttpClient.PostJsonAsync<SetToolConfigRequest, ToolConfigResponse>("LLMAssistantSetToolConfig", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Setting config for tool '{ToolId}'", request.ToolId);
+        ToolConfigResponse response = await _httpClient.PostJsonAsync<ToolConfigResponse>("LLMAssistantSetToolConfig", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Tool config save");
         return response;
     }
@@ -686,8 +672,8 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     {
         ArgumentNullException.ThrowIfNull(request);
         RequireToolId(request.ToolId);
-        Internal.Logger.LogDebug("Executing tool '{ToolId}'", request.ToolId);
-        ExecuteToolResponse response = await Internal.HttpClient.PostJsonAsync<ExecuteToolRequest, ExecuteToolResponse>("LLMAssistantExecuteTool", request, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Executing tool '{ToolId}'", request.ToolId);
+        ExecuteToolResponse response = await _httpClient.PostJsonAsync<ExecuteToolResponse>("LLMAssistantExecuteTool", request, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Tool execution");
         return response;
     }
@@ -695,45 +681,43 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     /// <inheritdoc />
     public async Task<ImagePresetsResponse> GetImagePresetsAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Listing image presets");
-        return await Internal.HttpClient.PostJsonAsync<ImagePresetsResponse>("LLMAssistantGetImagePresets", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Listing image presets");
+        return await _httpClient.PostJsonAsync<ImagePresetsResponse>("LLMAssistantGetImagePresets", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<CompanionContextResponse> GetCompanionContextAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading companion context");
-        return await Internal.HttpClient.PostJsonAsync<CompanionContextResponse>("LLMAssistantGetCompanionContext", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading companion context");
+        return await _httpClient.PostJsonAsync<CompanionContextResponse>("LLMAssistantGetCompanionContext", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<UserProfileResponse> GetUserProfileAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Reading user memory profile");
-        return await Internal.HttpClient.PostJsonAsync<UserProfileResponse>("LLMAssistantGetUserProfile", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Reading user memory profile");
+        return await _httpClient.PostJsonAsync<UserProfileResponse>("LLMAssistantGetUserProfile", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<LLMAssistantResponse> ClearUserProfileAsync(CancellationToken cancellationToken = default)
     {
-        Internal.Logger.LogDebug("Clearing user memory profile");
-        LLMAssistantResponse response = await Internal.HttpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantClearUserProfile", payload: null, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Clearing user memory profile");
+        LLMAssistantResponse response = await _httpClient.PostJsonAsync<LLMAssistantResponse>("LLMAssistantClearUserProfile", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "Memory profile clear");
         return response;
     }
 
     /// <summary>Streams one of the chat WebSocket endpoints.</summary>
-    private IAsyncEnumerable<ChatStreamUpdate> StreamChatAsync(string endpoint, ChatStreamRequest request, CancellationToken cancellationToken)
+    private async IAsyncEnumerable<ChatStreamUpdate> StreamChatAsync(string endpoint, ChatStreamRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        return Internal.WebSocketClient.StreamMessagesAsync(endpoint, request, ParseChatUpdate, cancellationToken);
-    }
-
-    /// <summary>Parses a streamed chat frame, preserving the complete frame for fields without a typed member.</summary>
-    private static ChatStreamUpdate ParseChatUpdate(JObject message)
-    {
-        ChatStreamUpdate update = message.ToObject<ChatStreamUpdate>() ?? new ChatStreamUpdate();
-        update.Raw = message;
-        return update;
+        JObject payload = JObject.FromObject(request);
+        await foreach (JObject frame in _webSocketClient.StreamFramesAsync(endpoint, payload, _sessionKey, cancellationToken).ConfigureAwait(false))
+        {
+            ChatStreamUpdate update = frame.ToObject<ChatStreamUpdate>() ?? new ChatStreamUpdate();
+            update.Raw = frame;
+            yield return update;
+        }
     }
 
     /// <summary>Builds a payload carrying only a thread identifier.</summary>
@@ -809,11 +793,11 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
     {
         if (response.Success)
         {
-            Internal.Logger.LogInformation("{Operation} succeeded", operation);
+            _logger.LogInformation("{Operation} succeeded", operation);
         }
         else
         {
-            Internal.Logger.LogWarning("{Operation} failed: {Error}", operation, response.Error ?? "Unknown error");
+            _logger.LogWarning("{Operation} failed: {Error}", operation, response.Error ?? "Unknown error");
         }
     }
 }

@@ -2,7 +2,7 @@ name: Publish to NuGet
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
 
 jobs:
   publish:
@@ -15,17 +15,32 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Verify tag matches project version
+        run: |
+          PROJECT_VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' SwarmUI.ApiClient.csproj)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PROJECT_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag v$TAG_VERSION does not match csproj Version $PROJECT_VERSION" >&2
+            exit 1
+          fi
 
-      - name: Build
-        run: dotnet build -c Release --no-restore
+      - name: Restore library
+        run: dotnet restore SwarmUI.ApiClient.csproj
 
-      - name: Run tests
-        run: dotnet test Tests/SwarmTests.csproj -c Release --no-build --verbosity normal
+      - name: Build library
+        run: dotnet build SwarmUI.ApiClient.csproj -c Release --no-restore
+
+      - name: Restore tests
+        run: dotnet restore Tests/SwarmTests.csproj
+
+      - name: Build tests
+        run: dotnet build Tests/SwarmTests.csproj -c Release --no-restore
+
+      - name: Run unit tests
+        run: dotnet test Tests/SwarmTests.csproj -c Release --no-build --verbosity normal --filter "Category!=Integration"
 
       - name: Pack
-        run: dotnet pack -c Release --no-build -o ./nupkg
+        run: dotnet pack SwarmUI.ApiClient.csproj -c Release --no-build -o "$RUNNER_TEMP/nupkg"
 
       - name: Push to NuGet
-        run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "$RUNNER_TEMP"/nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
