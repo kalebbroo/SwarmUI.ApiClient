@@ -106,7 +106,15 @@ public class GenerationEndpoint : IGenerationEndpoint
         cancellationToken.ThrowIfCancellationRequested();
         if (!sawSocketIntentionClose)
         {
+            // The server always signals a finished batch with socket_intention:"close"; without it the
+            // connection died mid-flight. Record it as an error so consumers always have a reason to
+            // show — a failure with an empty Errors list leaves callers with nothing but "unknown".
             _logger.LogWarning("Generation stream for session key '{Key}' ended without a socket_intention close frame (server closed early)", _sessionKey);
+            errors.Add(new ErrorInfo
+            {
+                Message = "The generation stream ended before the server signaled completion, so the result is unconfirmed. The connection may have dropped; work already queued keeps running on the server until interrupted.",
+                ErrorId = ErrorInfo.StreamEndedEarlyErrorId
+            });
         }
         bool succeeded = imagesReceived > 0 && errors.Count == 0;
         _logger.LogInformation("Generation complete: succeeded={Succeeded} images={Images} discards={Discards} errors={Errors}", succeeded, imagesReceived, discardedIndices.Count, errors.Count);

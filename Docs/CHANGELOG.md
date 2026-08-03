@@ -1,5 +1,20 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.9.1-beta
+
+Follow-up to 0.9.0-beta from real-world generation testing. No API changes.
+
+### Fixed
+
+- A generation stream that ends without the server's terminal `socket_intention:"close"` frame now
+  records a synthetic error in `CompletionInfo.Errors` (id `ErrorInfo.StreamEndedEarlyErrorId`,
+  `"stream_ended_early"`) explaining that the connection dropped and the outcome is unconfirmed.
+  Previously such a stream produced `Succeeded = false` with an **empty** `Errors` list, leaving
+  consumers with a failure they could only report as "unknown error".
+- Consumers can now distinguish a server-reported failure from a dropped connection by checking
+  that error id, and should call `InterruptAllAsync` on the same session when they see it —
+  SwarmUI keeps generating after a client disconnects, so abandoned work is otherwise orphaned.
+
 ## 0.9.0-beta
 
 Correctness and hardening release built against the verified SwarmUI server contract (official API

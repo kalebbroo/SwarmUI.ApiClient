@@ -224,7 +224,7 @@ public class GenerationEndpointTests
     }
 
     [Fact]
-    public async Task Stream_ServerClosedEarly_StillEmitsOneComplete()
+    public async Task Stream_ServerClosedEarly_StillEmitsOneComplete_WithAReason()
     {
         // No socket_intention frame at all — server died. Exactly one complete, marked failed (zero images).
         List<GenerationUpdate> updates = await RunStreamAsync(
@@ -232,7 +232,27 @@ public class GenerationEndpointTests
             JObject.Parse("""{"status":{"waiting_gens":1}}""")
         ]);
         Assert.Equal(new[] { "status", "complete" }, updates.Select(u => u.Type).ToArray());
-        Assert.False(updates[^1].Completion!.Succeeded);
+        CompletionInfo completion = updates[^1].Completion!;
+        Assert.False(completion.Succeeded);
+        // A failure must never arrive with an empty reason — consumers would have nothing to show but "unknown error".
+        ErrorInfo reason = Assert.Single(completion.Errors);
+        Assert.Equal(ErrorInfo.StreamEndedEarlyErrorId, reason.ErrorId);
+        Assert.NotEmpty(reason.Message);
+    }
+
+    [Fact]
+    public async Task Stream_ImagesThenDroppedConnection_ReportsUnconfirmedRatherThanSuccess()
+    {
+        // Images arrived but the server never signaled the batch was done: the outcome is genuinely
+        // unknown (more images may have been coming), so it must not be reported as a clean success.
+        List<GenerationUpdate> updates = await RunStreamAsync(
+        [
+            JObject.Parse("""{"image":"a.png","batch_index":"0"}""")
+        ]);
+        CompletionInfo completion = updates[^1].Completion!;
+        Assert.False(completion.Succeeded);
+        Assert.Equal(1, completion.ImagesReceived);
+        Assert.Equal(ErrorInfo.StreamEndedEarlyErrorId, Assert.Single(completion.Errors).ErrorId);
     }
 
     [Fact]

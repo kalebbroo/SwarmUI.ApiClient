@@ -68,11 +68,15 @@ public class CompletionInfo
 /// <summary>Contains error message information when generation fails.</summary>
 public class ErrorInfo
 {
+    /// <summary>Error id used when the stream ended before the server signaled batch completion — the connection dropped rather than the server reporting a failure.</summary>
+    /// <remarks>Consumers should treat this differently from a server-reported error: the outcome is unknown, and any queued work continues server-side until InterruptAll is called on the same session.</remarks>
+    public const string StreamEndedEarlyErrorId = "stream_ended_early";
+
     /// <summary>Human-readable error message explaining what went wrong.</summary>
     [JsonProperty("message")]
     public string Message { get; set; } = string.Empty;
 
-    /// <summary>Machine-readable error id when the server provided one (e.g. "invalid_session_id"); null for plain generation errors.</summary>
+    /// <summary>Machine-readable error id when the server provided one (e.g. "invalid_session_id"), or <see cref="StreamEndedEarlyErrorId"/> for a dropped stream; null for plain generation errors.</summary>
     [JsonProperty("error_id")]
     public string? ErrorId { get; set; }
 }
