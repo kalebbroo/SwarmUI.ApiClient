@@ -149,6 +149,26 @@ public class GenerationRequest
     public string? VideoFormat { get; set; }
     #endregion
 
+    #region Image-to-3D
+    // These require a server extension that exposes an image-to-3D pipeline. The conditioning
+    // image travels as InitImage, and Steps/CfgScale/Seed carry their usual meaning — only the
+    // surface-extraction settings and the output container are specific to 3D.
+
+    /// <summary>Marching-cubes grid resolution per axis for the surface decode ("3D Grid
+    /// Resolution"). Higher is more detailed and much slower. 0 uses the model's default.</summary>
+    [JsonProperty("threedgridresolution")]
+    public int? ThreeDGridResolution { get; set; }
+
+    /// <summary>Iso level for surface extraction ("3D Iso Level"). 0 is the SDF zero-crossing;
+    /// occupancy models override it.</summary>
+    [JsonProperty("threedisolevel")]
+    public float? ThreeDIsoLevel { get; set; }
+
+    /// <summary>Container for the returned geometry ("3D Format"): glb, obj, ply.</summary>
+    [JsonProperty("threedformat")]
+    public string? ThreeDFormat { get; set; }
+    #endregion
+
     #region AudioLab extension — shared
     // These parameters require the AudioLab server extension. Which ones a given model honours is
     // decided by the feature flags SwarmUI registers per audio architecture (music, TTS, STT, SFX).
