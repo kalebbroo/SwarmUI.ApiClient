@@ -5,8 +5,9 @@ using Newtonsoft.Json;
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
 /// <summary>Request parameters for text-to-image generation via SwarmUI.</summary>
-/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list. Extension-region parameters require the corresponding server extension to be installed.</remarks>
-public class GenerationRequest
+/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list.</remarks>
+/// <remarks>This file holds the parameters SwarmUI itself registers. Parameters that only exist when a server extension is installed live with that extension — see <c>Extensions/AudioLab/Contracts/GenerationRequest.AudioLab.cs</c> — so the class is <see langword="partial"/> and each extension's surface stays where someone would look for it.</remarks>
+public partial class GenerationRequest
 {
     /// <summary>Number of images to generate for this request. Each image is an independent job with its own <c>batch_index</c>.</summary>
     /// <remarks>Server limit: 1–10000.</remarks>
@@ -149,142 +150,6 @@ public class GenerationRequest
     public string? VideoFormat { get; set; }
     #endregion
 
-    #region Image-to-3D
-    // These require a server extension that exposes an image-to-3D pipeline. The conditioning
-    // image travels as InitImage, and Steps/CfgScale/Seed carry their usual meaning — only the
-    // surface-extraction settings and the output container are specific to 3D.
-
-    /// <summary>Marching-cubes grid resolution per axis for the surface decode ("3D Grid
-    /// Resolution"). Higher is more detailed and much slower. 0 uses the model's default.</summary>
-    [JsonProperty("threedgridresolution")]
-    public int? ThreeDGridResolution { get; set; }
-
-    /// <summary>Iso level for surface extraction ("3D Iso Level"). 0 is the SDF zero-crossing;
-    /// occupancy models override it.</summary>
-    [JsonProperty("threedisolevel")]
-    public float? ThreeDIsoLevel { get; set; }
-
-    /// <summary>Container for the returned geometry ("3D Format"): glb, obj, ply.</summary>
-    [JsonProperty("threedformat")]
-    public string? ThreeDFormat { get; set; }
-    #endregion
-
-    #region AudioLab extension — shared
-    // These parameters require the AudioLab server extension. Which ones a given model honours is
-    // decided by the feature flags SwarmUI registers per audio architecture (music, TTS, STT, SFX).
-
-    /// <summary>Container for the returned audio ("Audio Output Format"): wav_16, wav_32, flac, mp3, ogg.</summary>
-    [JsonProperty("audiooutputformat")]
-    public string? AudioOutputFormat { get; set; }
-
-    /// <summary>Encoding quality for the returned audio ("Audio Quality"): low, medium, high, max.</summary>
-    [JsonProperty("audioquality")]
-    public string? AudioQuality { get; set; }
-    #endregion
-
-    #region AudioLab extension — music generation
-    /// <summary>Song lyrics for music models that sing ("Lyrics"). "[Instrumental]" for no vocals.</summary>
-    [JsonProperty("lyrics")]
-    public string? Lyrics { get; set; }
-
-    /// <summary>Denoising steps for audio models ("Infer Steps"); 0 uses the model's own default. Server range 0–200.</summary>
-    [JsonProperty("infersteps")]
-    public int? AudioInferSteps { get; set; }
-
-    /// <summary>Guidance scale for ACE-Step music models ("ACE Guidance"). Server range 1–15.</summary>
-    [JsonProperty("aceguidance")]
-    public float? AceGuidance { get; set; }
-
-    /// <summary>Whether to generate without vocals ("Instrumental"). Registered as a string dropdown: "true" / "false".</summary>
-    [JsonProperty("instrumental")]
-    public string? Instrumental { get; set; }
-
-    /// <summary>Free-text musical style/genre tags ("Music Style").</summary>
-    [JsonProperty("musicstyle")]
-    public string? MusicStyle { get; set; }
-
-    /// <summary>Tempo in beats per minute ("BPM"); 0 lets the model choose. Server range 0–300.</summary>
-    [JsonProperty("bpm")]
-    public int? Bpm { get; set; }
-
-    /// <summary>Musical key and mode ("Key Scale"), e.g. "C major". Empty lets the model choose.</summary>
-    [JsonProperty("keyscale")]
-    public string? KeyScale { get; set; }
-
-    /// <summary>Beats per bar ("Time Signature"): 2, 3, 4, 6.</summary>
-    [JsonProperty("timesignature")]
-    public string? TimeSignature { get; set; }
-
-    /// <summary>Language sung in the vocals ("Vocal Language"), e.g. "en", "ja". "unknown" lets the model choose.</summary>
-    [JsonProperty("vocallanguage")]
-    public string? VocalLanguage { get; set; }
-
-    /// <summary>Denoising steps for Stable Audio models ("Stable Audio Steps"). Server range 1–100.</summary>
-    [JsonProperty("stableaudiosteps")]
-    public int? StableAudioSteps { get; set; }
-    #endregion
-
-    #region AudioLab extension — AudioCraft sampling (MusicGen, AudioGen)
-    /// <summary>Maximum output length in seconds ("Max Duration"). Server range 1–300.</summary>
-    [JsonProperty("maxduration")]
-    public float? MaxDuration { get; set; }
-
-    /// <summary>Prompt adherence for AudioCraft models ("Guidance Scale"). Server range 0–10.</summary>
-    [JsonProperty("guidancescale")]
-    public float? AudioGuidanceScale { get; set; }
-
-    /// <summary>Sampling temperature for AudioCraft models ("Temperature"). Server range 0–2.</summary>
-    [JsonProperty("audiocrafttemperature")]
-    public float? AudioCraftTemperature { get; set; }
-
-    /// <summary>Top-K sampling cutoff for AudioCraft models ("Top K"). Server range 0–1000.</summary>
-    [JsonProperty("audiocrafttopk")]
-    public int? AudioCraftTopK { get; set; }
-
-    /// <summary>Top-P (nucleus) sampling cutoff for AudioCraft models ("Top P"). Server range 0–1.</summary>
-    [JsonProperty("audiocrafttopp")]
-    public float? AudioCraftTopP { get; set; }
-    #endregion
-
-    #region AudioLab extension — sound effects
-    /// <summary>Requested effect length in seconds ("SFX Duration"); 0 lets the model choose. Server range 0–30.</summary>
-    [JsonProperty("sfxduration")]
-    public float? SfxDuration { get; set; }
-
-    /// <summary>How literally the effect follows the prompt ("SFX Prompt Influence"). Server range 0–1.</summary>
-    [JsonProperty("sfxpromptinfluence")]
-    public float? SfxPromptInfluence { get; set; }
-    #endregion
-
-    #region AudioLab extension — speech (TTS, STT, voice conversion)
-    /// <summary>Reference clip whose voice a TTS model should imitate ("Reference Audio"). Data URL or server path.</summary>
-    [JsonProperty("referenceaudio")]
-    public string? ReferenceAudio { get; set; }
-
-    /// <summary>Transcript of <see cref="ReferenceAudio"/> ("Reference Text"), required by some cloning models.</summary>
-    [JsonProperty("referencetext")]
-    public string? ReferenceText { get; set; }
-
-    /// <summary>Audio to transcribe ("Audio Input") for speech-to-text models. Data URL or server path.</summary>
-    [JsonProperty("audioinput")]
-    public string? AudioInput { get; set; }
-
-    /// <summary>Spoken language hint for speech-to-text ("Language"); empty auto-detects.</summary>
-    [JsonProperty("language")]
-    public string? SpeechLanguage { get; set; }
-
-    /// <summary>Whisper mode ("Whisper Task"): transcribe or translate.</summary>
-    [JsonProperty("whispertask")]
-    public string? WhisperTask { get; set; }
-
-    /// <summary>Audio whose voice is being converted ("Source Audio"). Data URL or server path.</summary>
-    [JsonProperty("sourceaudio")]
-    public string? SourceAudio { get; set; }
-
-    /// <summary>Target voice for voice conversion ("Target Voice").</summary>
-    [JsonProperty("targetvoice")]
-    public string? TargetVoice { get; set; }
-    #endregion
 
     #region API Backends extension — Black Forest Labs (Flux via API)
     // These parameters require the SwarmUI-API-Backends server extension.
