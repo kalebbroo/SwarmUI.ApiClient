@@ -45,9 +45,11 @@ public class GenerationRequest
     [JsonProperty("cfgscale")]
     public float CfgScale { get; set; } = 7.0f;
 
-    /// <summary>Sampling algorithm used to denoise the image.</summary>
+    /// <summary>Sampling algorithm used to denoise the image. Null omits it from the payload,
+    /// which is required by models that carry their own solver — several video models refuse a
+    /// request that names a sampler at all.</summary>
     [JsonProperty("sampler")]
-    public string Sampler { get; set; } = "dpmpp_2m_sde";
+    public string? Sampler { get; set; } = "dpmpp_2m_sde";
 
     /// <summary>Noise schedule algorithm controlling how noise is removed across steps. Works in combination with the sampler.</summary>
     [JsonProperty("scheduler")]
