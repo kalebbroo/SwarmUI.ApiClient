@@ -50,9 +50,12 @@ public class GenerationEndpoint : IGenerationEndpoint
     {
         // Validate eagerly so failures throw at the call site, not at first enumeration.
         ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.Prompt))
+        // Speech-to-text and voice conversion are driven by an audio clip rather than words, so a
+        // request that supplies one is complete without a prompt.
+        bool hasAudioInput = !string.IsNullOrWhiteSpace(request.AudioInput) || !string.IsNullOrWhiteSpace(request.SourceAudio);
+        if (string.IsNullOrWhiteSpace(request.Prompt) && !hasAudioInput)
         {
-            throw new ArgumentException("Prompt is required for generation", nameof(request));
+            throw new ArgumentException("Generation needs a prompt, or an audio input for models that transcribe or convert audio", nameof(request));
         }
         if (request.Images is < 1 or > 10000)
         {
