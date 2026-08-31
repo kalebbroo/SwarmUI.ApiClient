@@ -50,8 +50,6 @@ public class GenerationEndpoint : IGenerationEndpoint
     {
         // Validate eagerly so failures throw at the call site, not at first enumeration.
         ArgumentNullException.ThrowIfNull(request);
-        // Speech-to-text and voice conversion are driven by an audio clip rather than words, so a
-        // request that supplies one is complete without a prompt.
         bool hasAudioInput = !string.IsNullOrWhiteSpace(request.AudioInput) || !string.IsNullOrWhiteSpace(request.SourceAudio);
         if (string.IsNullOrWhiteSpace(request.Prompt) && !hasAudioInput)
         {

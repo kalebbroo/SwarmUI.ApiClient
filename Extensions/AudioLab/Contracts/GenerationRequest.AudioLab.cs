@@ -2,13 +2,8 @@ using Newtonsoft.Json;
 
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
-/// <summary>The generation parameters the AudioLab server extension adds, kept with the extension
-/// rather than in the core request so each extension's surface stays in one findable place.</summary>
-/// <remarks>Same wire contract as the rest of <see cref="GenerationRequest"/>: the names below are
-/// the ids AudioLab registers, every property is nullable so an unset one never reaches the server,
-/// and which of them a given model honours is decided by the feature flags SwarmUI advertises per
-/// audio architecture (music, TTS, STT, sound effects). Sending a parameter whose feature flag no
-/// backend has makes SwarmUI refuse the whole request, so callers should gate on those flags.</remarks>
+/// <summary>Generation parameters registered by the AudioLab server extension.</summary>
+/// <remarks>Only send parameters advertised by the selected model's feature flags.</remarks>
 public partial class GenerationRequest
 {
     /// <summary>Container for the returned audio ("Audio Output Format"): wav_16, wav_32, flac, mp3, ogg.</summary>

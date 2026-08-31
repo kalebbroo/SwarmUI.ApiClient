@@ -5,8 +5,7 @@ using Newtonsoft.Json;
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
 /// <summary>Request parameters for text-to-image generation via SwarmUI.</summary>
-/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list.</remarks>
-/// <remarks>This file holds the parameters SwarmUI itself registers. Parameters that only exist when a server extension is installed live with that extension — see <c>Extensions/AudioLab/Contracts/GenerationRequest.AudioLab.cs</c> — so the class is <see langword="partial"/> and each extension's surface stays where someone would look for it.</remarks>
+/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list. Extension-region parameters require the corresponding server extension to be installed.</remarks>
 public partial class GenerationRequest
 {
     /// <summary>Number of images to generate for this request. Each image is an independent job with its own <c>batch_index</c>.</summary>
@@ -46,9 +45,8 @@ public partial class GenerationRequest
     [JsonProperty("cfgscale")]
     public float CfgScale { get; set; } = 7.0f;
 
-    /// <summary>Sampling algorithm used to denoise the image. Null omits it from the payload,
-    /// which is required by models that carry their own solver — several video models refuse a
-    /// request that names a sampler at all.</summary>
+    /// <summary>Sampling algorithm used to denoise the image.</summary>
+    /// <remarks>Leave null for models with a built-in solver; some video models reject an explicit sampler.</remarks>
     [JsonProperty("sampler")]
     public string? Sampler { get; set; } = "dpmpp_2m_sde";
 
@@ -131,10 +129,6 @@ public partial class GenerationRequest
     public bool? ZeroNegative { get; set; }
 
     #region Video
-    // Text-to-video, where the selected model IS a video model (Wan, LTX-V, Hunyuan Video, ...).
-    // The separate `videoframes`/`videomodel` family drives Swarm's image-to-video stage, which
-    // appends a secondary video model after an image generation — a different pipeline.
-
     /// <summary>Frame count for text-to-video ("Text-To-Video Frames"). Server range 1–1000.</summary>
     /// <remarks>Duration in seconds is this divided by <see cref="VideoFps"/>.</remarks>
     [JsonProperty("textvideoframes")]
@@ -149,7 +143,6 @@ public partial class GenerationRequest
     [JsonProperty("videoformat")]
     public string? VideoFormat { get; set; }
     #endregion
-
 
     #region API Backends extension — Black Forest Labs (Flux via API)
     // These parameters require the SwarmUI-API-Backends server extension.
