@@ -173,7 +173,8 @@ public partial class GenerationRequest
 
     /// <summary>Classifier-free guidance for the audio pass ("Song Guidance"). Server range 1–3.</summary>
     /// <remarks>YuE2 runs at or just above 1.0; higher values distort rather than sharpen. Above 1.0 the model
-    /// prefills a second cache, which both doubles the cost and shortens the length that fits in its context.</remarks>
+    /// prefills a second cache, which doubles the cost, and if that branch is the longer of the two it is what
+    /// bounds how much song fits in the context.</remarks>
     [JsonProperty("songguidance")]
     public float? Yue2Guidance { get; set; }
 
