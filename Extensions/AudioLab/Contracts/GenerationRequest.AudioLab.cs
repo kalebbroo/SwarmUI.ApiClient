@@ -3,7 +3,13 @@ using Newtonsoft.Json;
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
 /// <summary>Generation parameters registered by the AudioLab server extension.</summary>
-/// <remarks>Only send parameters advertised by the selected model's feature flags.</remarks>
+/// <remarks>Only send parameters advertised by the selected model's feature flags. Each music provider reads its
+/// own set and nothing from another's: ACE-Step (<c>acestep_music_params</c>, <c>acestep_cfg_params</c>,
+/// <c>acestep_lm_params</c>, <c>acestep_task_params</c>), Stable Audio (<c>stableaudio_music_params</c>), YuE2
+/// (<c>yue2_music_params</c>), YuE v1 (<c>yue_music_params</c>), HeartMuLa (<c>heartlib_music_params</c>),
+/// MiniMax Music 3 (<c>minimax_music3_params</c>), AudioCraft (<c>audiocraft_sampling</c>). YuE2's wire names read
+/// <c>song*</c> for the pass that renders audio and <c>score*</c> for the pass that plans an ABC score, rather than
+/// carrying a YuE2 prefix, because SwarmUI strips digits from parameter ids and the prefix would collide with YuE v1.</remarks>
 public partial class GenerationRequest
 {
     /// <summary>Container for the returned audio ("Audio Output Format"): wav_16, wav_32, flac, mp3, ogg.</summary>
@@ -14,7 +20,7 @@ public partial class GenerationRequest
     [JsonProperty("audioquality")]
     public string? AudioQuality { get; set; }
 
-    // --- Music generation: ACE-Step ("acestep_music_params") ---
+    // --- Music generation ---
     /// <summary>Lyrics for ACE-Step ("Lyrics"). "[Instrumental]" for no vocals.</summary>
     /// <remarks>ACE-Step only. Every other music provider has its own lyrics parameter: <see cref="Yue2Lyrics"/>,
     /// <see cref="YuELyrics"/>, <see cref="HeartLibLyrics"/>, <see cref="MiniMaxMusic3Lyrics"/>. Sending this one
@@ -58,7 +64,6 @@ public partial class GenerationRequest
     [JsonProperty("stableaudiosteps")]
     public int? StableAudioSteps { get; set; }
 
-    // --- ACE-Step: solver and guidance interval ("acestep_music_params", "acestep_cfg_params") ---
     /// <summary>Timestep shift factor ("Shift"); 0 uses the checkpoint's own default. Server range 0–5.</summary>
     /// <remarks>Upstream recommends 3.0 for turbo checkpoints and it is not auto-corrected.</remarks>
     [JsonProperty("shift")]
@@ -81,7 +86,6 @@ public partial class GenerationRequest
     [JsonProperty("cfgintervalend")]
     public float? AceCfgIntervalEnd { get; set; }
 
-    // --- ACE-Step: LM metadata planner ("acestep_lm_params") ---
     /// <summary>Qwen3 planner that writes structured music metadata ("ACE LM Model"): none, 0.6B, 1.7B, 4B.</summary>
     [JsonProperty("acelmmodel")]
     public string? AceLmModel { get; set; }
@@ -122,7 +126,6 @@ public partial class GenerationRequest
     [JsonProperty("cotlanguage")]
     public string? AceCotLanguage { get; set; }
 
-    // --- ACE-Step: audio-to-audio tasks ("acestep_task_params") ---
     /// <summary>What ACE-Step should do ("Task Type"): text2music, cover, repaint, complete.</summary>
     /// <remarks>Everything except text2music requires <see cref="AceSourceAudio"/>.</remarks>
     [JsonProperty("tasktype")]
@@ -152,10 +155,6 @@ public partial class GenerationRequest
     [JsonProperty("covernoise")]
     public float? AceCoverNoise { get; set; }
 
-    // --- YuE2 ("yue2_music_params") ---
-    // YuE2 runs two passes: a score planner that writes an ABC score, then a codec-token pass that renders the
-    // audio. "Score *" parameters steer the planner, "Song *" parameters steer the audio. The names are not
-    // prefixed "YuE2" on the wire because SwarmUI strips digits from parameter ids, which would collide with YuE v1.
     /// <summary>Lyrics for YuE2 ("Song Lyrics"), section tags such as [verse] / [chorus] each on their own line.</summary>
     /// <remarks>Style and genre tags belong in <see cref="GenerationRequest.Prompt"/>, not here.</remarks>
     [JsonProperty("songlyrics")]
@@ -234,7 +233,6 @@ public partial class GenerationRequest
     [JsonProperty("scorepenaltywindow")]
     public int? Yue2ScorePenaltyWindow { get; set; }
 
-    // --- YuE v1 ("yue_music_params") — a different model from YuE2, sharing only the name ---
     /// <summary>Lyrics for YuE ("YuE Lyrics"). Required; each section marker becomes its own generated segment.</summary>
     [JsonProperty("yuelyrics")]
     public string? YuELyrics { get; set; }
@@ -268,7 +266,6 @@ public partial class GenerationRequest
     [JsonProperty("segments")]
     public int? YuESegments { get; set; }
 
-    // --- HeartMuLa ("heartlib_music_params") ---
     /// <summary>Lyrics for HeartMuLa ("HeartLib Lyrics"). Only [Intro] [Verse] [Prechorus] [Chorus] [Bridge] [Outro] are recognized.</summary>
     [JsonProperty("heartliblyrics")]
     public string? HeartLibLyrics { get; set; }
@@ -285,7 +282,6 @@ public partial class GenerationRequest
     [JsonProperty("heartlibtopk")]
     public int? HeartLibTopK { get; set; }
 
-    // --- MiniMax Music 3 ("minimax_music3_params") ---
     /// <summary>Lyrics for MiniMax Music 3 ("MiniMax Music 3 Lyrics"). Each section tag must be on its own line.</summary>
     [JsonProperty("minimaxmusiclyrics")]
     public string? MiniMaxMusic3Lyrics { get; set; }
@@ -298,7 +294,6 @@ public partial class GenerationRequest
     [JsonProperty("minimaxmusicsteps")]
     public int? MiniMaxMusic3Steps { get; set; }
 
-    // --- Clip length ("audiolab_audiogen") ---
     /// <summary>Maximum output length in seconds ("Max Duration"). Server range 1–900.</summary>
     /// <remarks>Shared by every AudioLab generation provider, not just AudioCraft. It is a ceiling, not a target:
     /// a model that finishes early returns the shorter clip. The server prefers the stock
@@ -308,7 +303,7 @@ public partial class GenerationRequest
     [JsonProperty("maxduration")]
     public float? MaxDuration { get; set; }
 
-    // --- AudioCraft sampling: MusicGen, AudioGen ("audiocraft_sampling") ---
+    // --- AudioCraft sampling (MusicGen, AudioGen) ---
 
     /// <summary>Prompt adherence for AudioCraft models ("Guidance Scale"). Server range 0–10.</summary>
     [JsonProperty("guidancescale")]
