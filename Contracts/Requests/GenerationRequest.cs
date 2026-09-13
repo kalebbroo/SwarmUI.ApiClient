@@ -128,6 +128,15 @@ public partial class GenerationRequest
     [JsonProperty("zeronegative")]
     public bool? ZeroNegative { get; set; }
 
+    #region Text To Audio
+    /// <summary>How long the generated audio clip should be, in seconds ("Text2Audio Duration"). Server range 1–1000.</summary>
+    /// <remarks>Stock SwarmUI parameter. AudioLab's backend reads this first and falls back to its own
+    /// <see cref="MaxDuration"/>, so a request that sets both is steered by this one. Every provider clamps it to
+    /// what it can actually produce, so the returned clip may be shorter than asked.</remarks>
+    [JsonProperty("textaudioduration")]
+    public float? Text2AudioDuration { get; set; }
+    #endregion
+
     #region Video
     /// <summary>Frame count for text-to-video ("Text-To-Video Frames"). Server range 1–1000.</summary>
     /// <remarks>Duration in seconds is this divided by <see cref="VideoFps"/>.</remarks>

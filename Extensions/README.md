@@ -24,9 +24,13 @@ Two of these extensions also register things into stock SwarmUI, so not every fe
 through this folder:
 
 - **AudioLab** registers audio T2I parameters and an audio backend type, so generating audio from a
-  prompt runs through `client.Generation` with an audio model selected. `Extensions/AudioLab` covers
-  what that pipeline does not: direct synthesis and transcription, engine and model management,
-  format conversion, time stretch, and DAW project storage.
+  prompt runs through `client.Generation` with an audio model selected. Those parameters live on
+  `GenerationRequest` (partial class, `AudioLab/Contracts/GenerationRequest.AudioLab.cs`) and cover every
+  music provider — ACE-Step, Stable Audio, AudioCraft, YuE2, YuE v1, HeartMuLa, MiniMax Music 3 — plus the
+  speech and transcription parameters shared across TTS and STT models. Per-provider TTS/STT voice and
+  tuning parameters are not covered yet. `Extensions/AudioLab` covers what the generation pipeline does not:
+  direct synthesis and transcription, engine and model management, format conversion, time stretch, and DAW
+  project storage.
 - **LLM Assistant** registers `LLM` as a SwarmUI model type, so listing LLM model *files* works
   through the stock `client.Models` endpoint with the LLM subtype. Use
   `client.Extensions.LLMAssistant.GetModelsAsync` when you need the models a live LLM provider is

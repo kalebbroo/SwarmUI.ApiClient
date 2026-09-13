@@ -1,5 +1,34 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.9.8-beta
+
+Music generation parameters for the AudioLab extension. Every name in this release was diffed against a live
+server's `ListT2IParams` registry, and a YuE2 song was generated through the client to confirm the server
+consumes them (`unused_parameters` reported only the stock image params a music model ignores).
+
+### Added
+
+- **54 AudioLab music parameters** on `GenerationRequest`, covering the providers the client previously could
+  not drive at all: **YuE2** (17), **YuE v1** (8), **HeartMuLa** (4), **MiniMax Music 3** (3), and ACE-Step's
+  solver, LM-planner and audio-to-audio task groups (22). Each block names its server feature flag.
+- **`Text2AudioDuration`** (`textaudioduration`), the stock SwarmUI clip-length parameter. AudioLab's backend
+  reads it *first* and falls back to `MaxDuration`, so a caller setting only the latter was on a different code
+  path than the UI.
+
+### Fixed
+
+- `MaxDuration` was documented as "Server range 1–300" under an AudioCraft heading. It is **1–900** and applies
+  to every AudioLab generation provider, not just AudioCraft.
+- `Lyrics` was documented as the lyrics parameter for "music models that sing". It is **ACE-Step only** — YuE2,
+  YuE v1, HeartMuLa and MiniMax Music 3 each have their own, and sending this one to them does nothing.
+
+### Notes
+
+- YuE2 names its parameters `Song *` (the pass that renders audio) and `Score *` (the pass that plans an ABC
+  score) rather than a `YuE2` prefix, because SwarmUI strips digits from parameter ids and a prefixed name would
+  collide with YuE v1. The C# properties keep the `Yue2` prefix; the wire names do not.
+- ~100 AudioLab TTS, STT and cloud-provider parameters remain uncovered. Music was this release's scope.
+
 ## 0.9.1-beta
 
 Follow-up to 0.9.0-beta from real-world generation testing. No API changes.
