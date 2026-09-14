@@ -35,8 +35,8 @@ namespace SwarmUI.ApiClient.Tests.IntegrationTests
             foreach (ModelInfo model in response.Files)
             {
                 Assert.False(string.IsNullOrEmpty(model.Name), "Model name should not be empty");
-                Assert.NotNull(model.Type);
-                Assert.NotNull(model.Metadata);
+                Assert.NotNull(model.LoraDefaultWeight);
+                Assert.NotNull(model.Hash);
             }
         }
 
@@ -47,7 +47,7 @@ namespace SwarmUI.ApiClient.Tests.IntegrationTests
                 cancellationToken: CancellationToken.None);
 
             bool hasStableDiffusionModel = response.Files.Any(model =>
-                model.Type.Contains("Stable-Diffusion", StringComparison.OrdinalIgnoreCase) ||
+                (model.CompatClass?.Contains("stable-diffusion", StringComparison.OrdinalIgnoreCase) ?? false) ||
                 model.Name.Contains("stable-diffusion", StringComparison.OrdinalIgnoreCase) ||
                 model.Name.Contains("sd", StringComparison.OrdinalIgnoreCase) ||
                 model.Name.Contains("xl", StringComparison.OrdinalIgnoreCase));
@@ -99,9 +99,8 @@ namespace SwarmUI.ApiClient.Tests.IntegrationTests
             foreach (ModelInfo model in response.Files)
             {
                 Assert.NotNull(model.Name);
-                Assert.NotNull(model.Type);
-                Assert.NotNull(model.Metadata);
-                Assert.IsAssignableFrom<Dictionary<string, object>>(model.Metadata);
+                Assert.NotNull(model.Hash);
+                Assert.NotNull(model.SpecialFormat);
             }
         }
 
