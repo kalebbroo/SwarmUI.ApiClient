@@ -14,6 +14,8 @@ visible in the folder tree, the namespace, and the call site.
 | AudioLab | `AudioLab/` | `client.Extensions.AudioLab` | 18 | https://github.com/HartsyAI/SwarmUI-AudioLab |
 | LLM Assistant | `LLMAssistant/` | `client.Extensions.LLMAssistant` | 51 | https://github.com/HartsyAI/SwarmUI-LLMAssistant |
 | MagicPrompt | `MagicPrompt/` | `client.Extensions.MagicPrompt` | 1 | https://github.com/HartsyAI/SwarmUI-MagicPromptExtension |
+| API Backends | `APIBackends/` | `client.Extensions.APIBackends` | 1 | https://github.com/HartsyAI/SwarmUI-API-Backends |
+| HartsyInference Backend | `HartsyInference/` | `client.Extensions.HartsyInference` | 5 | https://github.com/HartsyAI/SwarmUI-HartsyInference-Backend |
 
 The exact endpoint names each extension adds are listed in its `ExtensionInfo`, and are reported at
 runtime through `client.Extensions.All`.
@@ -31,6 +33,13 @@ through this folder:
   tuning parameters are not covered yet. `Extensions/AudioLab` covers what the generation pipeline does not:
   direct synthesis and transcription, engine and model management, format conversion, time stretch, and DAW
   project storage.
+- **API Backends** and **HartsyInference Backend** both register generation parameters and a backend type into
+  stock SwarmUI, so generating through them runs on `client.Generation`. Their own endpoints answer the question
+  a request cannot: what a given model will actually accept. `APIBackendsListModelCapabilities` reports each API
+  backed model's modality, whether it takes an init image and whether it batches;
+  `HartsyInferenceGetSupportedArchs` and `HartsyInferenceProbeModel` report which composition features, samplers
+  and schedulers an architecture or one specific checkpoint supports. Without them a client guesses and finds out
+  from a refusal.
 - **LLM Assistant** registers `LLM` as a SwarmUI model type, so listing LLM model *files* works
   through the stock `client.Models` endpoint with the LLM subtype. Use
   `client.Extensions.LLMAssistant.GetModelsAsync` when you need the models a live LLM provider is

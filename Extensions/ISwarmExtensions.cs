@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using SwarmUI.ApiClient.Extensions.APIBackends;
 using SwarmUI.ApiClient.Extensions.AudioLab;
+using SwarmUI.ApiClient.Extensions.HartsyInference;
 using SwarmUI.ApiClient.Extensions.LLMAssistant;
 using SwarmUI.ApiClient.Extensions.MagicPrompt;
 
@@ -17,6 +19,12 @@ public interface ISwarmExtensions
 
     /// <summary>Access to the MagicPrompt extension for LLM backed prompt enhancement.</summary>
     IMagicPromptEndpoint MagicPrompt { get; }
+
+    /// <summary>Access to the API-Backends extension for what each API backed model accepts.</summary>
+    IAPIBackendsEndpoint APIBackends { get; }
+
+    /// <summary>Access to the HartsyInference backend extension for architecture support, model probing, and backend inspection.</summary>
+    IHartsyInferenceEndpoint HartsyInference { get; }
 
     /// <summary>Metadata for every extension this client supports, for diagnostics and capability reporting.</summary>
     IReadOnlyList<SwarmExtensionInfo> All { get; }

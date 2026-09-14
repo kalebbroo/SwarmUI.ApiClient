@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
+using SwarmUI.ApiClient.Extensions.APIBackends;
 using SwarmUI.ApiClient.Extensions.AudioLab;
+using SwarmUI.ApiClient.Extensions.HartsyInference;
 using SwarmUI.ApiClient.Extensions.LLMAssistant;
 using SwarmUI.ApiClient.Extensions.MagicPrompt;
 using SwarmUI.ApiClient.Http;
@@ -22,6 +24,12 @@ public class SwarmExtensions : ISwarmExtensions
     public IMagicPromptEndpoint MagicPrompt { get; }
 
     /// <inheritdoc />
+    public IAPIBackendsEndpoint APIBackends { get; }
+
+    /// <inheritdoc />
+    public IHartsyInferenceEndpoint HartsyInference { get; }
+
+    /// <inheritdoc />
     public IReadOnlyList<SwarmExtensionInfo> All { get; }
 
     /// <summary>Creates the extension endpoint groups with the shared client infrastructure.</summary>
@@ -37,11 +45,15 @@ public class SwarmExtensions : ISwarmExtensions
         AudioLab = new AudioLabEndpoint(httpClient, webSocketClient, sessionKey, loggerFactory?.CreateLogger<AudioLabEndpoint>());
         LLMAssistant = new LLMAssistantEndpoint(httpClient, webSocketClient, sessionKey, loggerFactory?.CreateLogger<LLMAssistantEndpoint>());
         MagicPrompt = new MagicPromptEndpoint(httpClient, sessionKey, loggerFactory?.CreateLogger<MagicPromptEndpoint>());
+        APIBackends = new APIBackendsEndpoint(httpClient, sessionKey, loggerFactory?.CreateLogger<APIBackendsEndpoint>());
+        HartsyInference = new HartsyInferenceEndpoint(httpClient, sessionKey, loggerFactory?.CreateLogger<HartsyInferenceEndpoint>());
         All = new SwarmExtensionInfo[]
         {
             AudioLabEndpoint.ExtensionInfo,
             LLMAssistantEndpoint.ExtensionInfo,
-            MagicPromptEndpoint.ExtensionInfo
+            MagicPromptEndpoint.ExtensionInfo,
+            APIBackendsEndpoint.ExtensionInfo,
+            HartsyInferenceEndpoint.ExtensionInfo
         };
     }
 }
