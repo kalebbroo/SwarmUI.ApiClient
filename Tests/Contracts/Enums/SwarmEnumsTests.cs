@@ -17,6 +17,7 @@ namespace SwarmUI.ApiClient.Tests.Models.Enums
         [InlineData(SwarmSubType.Clip, "Clip", "text_encoders")]
         [InlineData(SwarmSubType.ClipVision, "ClipVision", "clip_vision")]
         [InlineData(SwarmSubType.LLM, "LLM", "llm")]
+        [InlineData(SwarmSubType.Audio, "Audio", "audio")]
         public void SwarmSubType_AsApiType_And_AsFolder_MatchSwarmUICanonicalStrings(SwarmSubType subType, string expectedApi, string expectedFolder)
         {
             Assert.Equal(expectedApi, subType.AsApiType());
@@ -32,6 +33,7 @@ namespace SwarmUI.ApiClient.Tests.Models.Enums
         [InlineData("Clip", SwarmSubType.Clip)]
         [InlineData("ClipVision", SwarmSubType.ClipVision)]
         [InlineData("LLM", SwarmSubType.LLM)]
+        [InlineData("Audio", SwarmSubType.Audio)]
         public void SwarmSubType_TryParseApiType_AcceptsAllCanonicalStrings(string apiType, SwarmSubType expected)
         {
             bool parsed = SwarmSubTypeExtensions.TryParseApiType(apiType, out SwarmSubType result);

@@ -2,7 +2,7 @@ using System;
 
 namespace SwarmUI.ApiClient.Contracts.Enums;
 
-/// <summary>Model sub-types accepted by SwarmUI's <c>DoModelDownloadWS</c> endpoint, mirroring the eight categories SwarmUI registers in <c>Program.BuildModelLists()</c>.</summary>
+/// <summary>Model sub-types accepted by SwarmUI's <c>DoModelDownloadWS</c> endpoint and the other model APIs, covering the categories core registers in <c>Program.BuildModelLists()</c> plus the two that extensions add.</summary>
 /// <remarks>The enum value names use C# casing conventions. Use <see cref="SwarmSubTypeExtensions.AsApiType"/> to obtain the exact string SwarmUI accepts in API payloads (case-sensitive), or <see cref="SwarmSubTypeExtensions.AsFolder"/> to obtain SwarmUI's default on-disk folder name (which differs in casing for several entries).</remarks>
 public enum SwarmSubType
 {
@@ -21,7 +21,9 @@ public enum SwarmSubType
     /// <summary>CLIP Vision encoders used by IP-Adapter and similar. API: "ClipVision", Folder: "clip_vision".</summary>
     ClipVision,
     /// <summary>Large language models registered by the SwarmUI-LLMAssistant extension. API: "LLM", Folder: "llm".</summary>
-    LLM
+    LLM,
+    /// <summary>Speech, music and audio-processing models registered by the SwarmUI-AudioLab extension. API: "Audio", Folder: "audio".</summary>
+    Audio
 }
 
 /// <summary>Extension methods that translate <see cref="SwarmSubType"/> values to the exact strings SwarmUI uses in its API payloads and on-disk folder structure.</summary>
@@ -38,6 +40,7 @@ public static class SwarmSubTypeExtensions
         SwarmSubType.Clip => "Clip",
         SwarmSubType.ClipVision => "ClipVision",
         SwarmSubType.LLM => "LLM",
+        SwarmSubType.Audio => "Audio",
         _ => throw new ArgumentOutOfRangeException(nameof(subType), subType, "Unknown SwarmSubType value")
     };
 
@@ -53,6 +56,7 @@ public static class SwarmSubTypeExtensions
         SwarmSubType.Clip => "text_encoders",
         SwarmSubType.ClipVision => "clip_vision",
         SwarmSubType.LLM => "llm",
+        SwarmSubType.Audio => "audio",
         _ => throw new ArgumentOutOfRangeException(nameof(subType), subType, "Unknown SwarmSubType value")
     };
 
@@ -70,6 +74,7 @@ public static class SwarmSubTypeExtensions
             case "Clip": subType = SwarmSubType.Clip; return true;
             case "ClipVision": subType = SwarmSubType.ClipVision; return true;
             case "LLM": subType = SwarmSubType.LLM; return true;
+            case "Audio": subType = SwarmSubType.Audio; return true;
             default: subType = default; return false;
         }
     }
