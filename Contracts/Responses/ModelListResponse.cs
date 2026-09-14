@@ -24,7 +24,8 @@ public class ModelListResponse
 public class ModelInfo
 {
     /// <summary>Path-style model name relative to its subtype folder, including the file extension — for example <c>"SDXL/sd_xl_base_1.0.safetensors"</c>.</summary>
-    /// <remarks>Parameter dropdowns in <c>ListT2IParams</c> list the same models with the extension stripped, so a
+    /// <remarks>The same spelling appears in <c>ListT2IParams</c>'s <c>models</c> map. Model-typed parameters that
+    /// publish their own value list, such as the refiner model and the VAEs, strip <c>.safetensors</c> instead, so a
     /// name taken from here does not always match a value taken from there.</remarks>
     [JsonProperty("name")]
     public string Name { get; set; } = string.Empty;
