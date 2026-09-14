@@ -88,8 +88,9 @@ public partial class GenerationRequest
     public string? InitImage { get; set; }
 
     /// <summary>Controls how much the output can differ from InitImage in img2img mode. Range: 0.0 to 1.0. Only sent when <see cref="InitImage"/> is set.</summary>
+    /// <remarks>0.6 matches the server's own default.</remarks>
     [JsonProperty("initimagecreativity")]
-    public float InitImageCreativity { get; set; } = 0.7f;
+    public float InitImageCreativity { get; set; } = 0.6f;
 
     /// <summary>Aspect ratio (e.g. "1:1", "16:9"). SwarmUI derives width/height from this when set to a non-custom value.</summary>
     [JsonProperty("aspectratio")]
@@ -128,6 +129,79 @@ public partial class GenerationRequest
     [JsonProperty("zeronegative")]
     public bool? ZeroNegative { get; set; }
 
+    #region Refine / Upscale
+    /// <summary>Model for the refiner stage ("Refiner Model"). Naming one is what enables the stage.</summary>
+    /// <remarks>There is no separate "use refiner" switch. The server treats <c>"(Use Base)"</c> as off, which is
+    /// also this parameter's default, so leaving it unset and sending that string mean the same thing.</remarks>
+    [JsonProperty("refinermodel")]
+    public string? RefinerModel { get; set; }
+
+    /// <summary>Fraction of the total steps the refiner runs for ("Refiner Control Percentage"). Server range 0–1, default 0.2.</summary>
+    [JsonProperty("refinercontrolpercentage")]
+    public float? RefinerControlPercentage { get; set; }
+
+    /// <summary>How the refiner is applied ("Refiner Method"): PostApply, StepSwap, StepSwapNoisy.</summary>
+    [JsonProperty("refinermethod")]
+    public string? RefinerMethod { get; set; }
+
+    /// <summary>Upscale factor applied between the base and refiner stages ("Refiner Upscale"). Server range 0.25–8.</summary>
+    /// <remarks>The server treats 1 as off, which is also the default.</remarks>
+    [JsonProperty("refinerupscale")]
+    public float? RefinerUpscale { get; set; }
+
+    /// <summary>Algorithm for that upscale ("Refiner Upscale Method"), for example pixel-lanczos, latent-bislerp, real-esrgan-x4plus.</summary>
+    [JsonProperty("refinerupscalemethod")]
+    public string? RefinerUpscaleMethod { get; set; }
+
+    /// <summary>Step count the refiner's control percentage is calculated against ("Refiner Steps"). Server range 1–200.</summary>
+    [JsonProperty("refinersteps")]
+    public int? RefinerSteps { get; set; }
+
+    /// <summary>CFG scale for the refiner stage alone ("Refiner CFG Scale"). Server range 0–100.</summary>
+    [JsonProperty("refinercfgscale")]
+    public float? RefinerCfgScale { get; set; }
+
+    /// <summary>Sampler for the refiner stage alone ("Refiner Sampler").</summary>
+    [JsonProperty("refinersampler")]
+    public string? RefinerSampler { get; set; }
+
+    /// <summary>Scheduler for the refiner stage alone ("Refiner Scheduler").</summary>
+    [JsonProperty("refinerscheduler")]
+    public string? RefinerScheduler { get; set; }
+
+    /// <summary>VAE replacement for the refiner stage ("Refiner VAE"). The server treats <c>"None"</c> as off.</summary>
+    [JsonProperty("refinervae")]
+    public string? RefinerVae { get; set; }
+
+    /// <summary>Whether the refiner stage tiles its generation ("Refiner Do Tiling"). The server treats false as off.</summary>
+    [JsonProperty("refinerdotiling")]
+    public bool? RefinerDoTiling { get; set; }
+
+    /// <summary>HyperTile size for the refiner stage ("Refiner HyperTile"). Server range 1–1024.</summary>
+    [JsonProperty("refinerhypertile")]
+    public int? RefinerHyperTile { get; set; }
+    #endregion
+
+    #region Model add-ons
+    /// <summary>VAE override for the whole generation ("VAE"). <c>"Automatic"</c> lets the model pick; <c>"None"</c> is off.</summary>
+    [JsonProperty("vae")]
+    public string? Vae { get; set; }
+
+    /// <summary>Per-LoRA text-encoder weights ("LoRA Tenc Weights"), comma separated and positionally matched to the LoRA list.</summary>
+    /// <remarks><see cref="Loras"/> fills the <c>loras</c> and <c>loraweights</c> arrays; this is the third, optional
+    /// array alongside them, so its entry count must match.</remarks>
+    [JsonProperty("loratencweights")]
+    public string? LoraTencWeights { get; set; }
+
+    /// <summary>Per-LoRA prompt-section confinement ("LoRA Section Confinement"), comma separated and positionally matched to the LoRA list.</summary>
+    [JsonProperty("lorasectionconfinement")]
+    public string? LoraSectionConfinement { get; set; }
+
+    /// <summary>Whether the negative prompt pass also applies the LoRAs ("Negative Model Include LoRAs"). Server default true.</summary>
+    [JsonProperty("negativemodelincludeloras")]
+    public bool? NegativeModelIncludeLoras { get; set; }
+    #endregion
+
     #region Text To Audio
     /// <summary>How long the generated audio clip should be, in seconds ("Text2Audio Duration"). Server range 1–1000.</summary>
     /// <remarks>Stock SwarmUI parameter. AudioLab's backend reads this first and falls back to its own
@@ -139,9 +213,14 @@ public partial class GenerationRequest
 
     #region Video
     /// <summary>Frame count for text-to-video ("Text-To-Video Frames"). Server range 1–1000.</summary>
-    /// <remarks>Duration in seconds is this divided by <see cref="VideoFps"/>.</remarks>
+    /// <remarks>Duration in seconds is this divided by <see cref="VideoFps"/>. Image-to-video is a separate
+    /// parameter, <see cref="ImageToVideoFrames"/>; this one does not reach it.</remarks>
     [JsonProperty("textvideoframes")]
     public int? VideoFrames { get; set; }
+
+    /// <summary>Frame count for image-to-video ("Video Frames"). Server range 1–1000, default 25.</summary>
+    [JsonProperty("videoframes")]
+    public int? ImageToVideoFrames { get; set; }
 
     /// <summary>Output frame rate ("Video FPS"). Server range 1–1024, default 24.</summary>
     [JsonProperty("videofps")]
