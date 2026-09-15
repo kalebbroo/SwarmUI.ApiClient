@@ -1,5 +1,71 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.10.0-beta
+
+Contract release. Every gap here is a field the server already sent and the client discarded, or a parameter the
+server registers and the client could not carry. Names were diffed against a live `ListT2IParams` registry and the
+SwarmUI source rather than taken on trust, and the diff is now a test.
+
+### Breaking changes
+
+- **`ModelInfo` is rewritten.** Six of its eight properties were bound to keys SwarmUI never sends —
+  `type`, `version`, `path`, `date_created`, `date_modified` and `metadata` — so only `Name` and `Description`
+  were ever populated. They are removed and replaced with the 29 fields `T2IModel.ToNetObject` actually emits,
+  verified against 336 live entries across five subtypes. `Description` is now nullable, because the server sends
+  null for a model that has none.
+- **`[JsonExtensionData]` moved from `ModelDescription` up to `ModelInfo`**, so `ListModels` and
+  `ListLoadedModels` keep unmapped fields too rather than only `DescribeModel`. `ModelDescription` now adds
+  nothing of its own; the endpoint returns the same object `ListModels` puts in `files`.
+- **`T2IParamsResponse.ModelsBySubtype`** is `Dictionary<string, List<T2IParamModelEntry>>` instead of lists of
+  bare strings. Each server entry is a `[name, classId]` pair and the class id was being discarded.
+- **`Priority` is `double`** on both `T2IParamDefinition` and `T2IParamGroup`. The server sends fractional values
+  and means them: 42 parameters and 5 groups sit on half-steps to order between their neighbours, and rounding
+  collapsed those into ties.
+- **`GenerationRequest.InitImageCreativity` defaults to 0.6**, matching the server. It was 0.7.
+
+### Added
+
+- **`ModelInfo.CompatClass`.** This is what decides adapter compatibility: SwarmUI treats a LoRA, VAE or
+  ControlNet as fitting a base model when their `compat_class` values match. Comparing architecture ids instead
+  rejects valid pairings, because variants of one lineage share a compatibility class but not an architecture id.
+- **The Refine / Upscale parameter group**, previously unreachable: `refinermodel`,
+  `refinercontrolpercentage`, `refinermethod`, `refinerupscale`, `refinerupscalemethod`, `refinersteps`,
+  `refinercfgscale`, `refinersampler`, `refinerscheduler`, `refinervae`, `refinerdotiling`, `refinerhypertile`.
+  There is no "use refiner" switch — naming a refiner model is what enables the stage, and the server reads
+  `"(Use Base)"` as off.
+- **`vae`, `negativemodelincludeloras`, `loratencweights` and `lorasectionconfinement`**, the last two being the
+  optional arrays that ride alongside a LoRA list.
+- **`videoframes`**, image-to-video's frame count, which is a different parameter from the `textvideoframes`
+  this client already carried.
+- **`textaudioduration`**, the stock clip-length parameter AudioLab's backend reads before its own `maxduration`.
+- **Five registry fields**: `value_names` (every dropdown's display labels — without them a UI can only render
+  raw ids), `nonreusable` (the filter a reuse-these-settings action needs), `depend_non_default`, `view_min` and
+  `can_sectionalize`.
+- **`model_classes` and `model_compat_classes`**, the two top-level registry tables that together answer which
+  adapters fit a base model without another request.
+- **Two extension endpoint groups.** `client.Extensions.APIBackends.ListModelCapabilitiesAsync` reports each API
+  backed model's family, modality, init-image and batch support, and feature flags.
+  `client.Extensions.HartsyInference` covers all five endpoints that extension registers: supported
+  architectures with their composition features and accepted samplers and schedulers, a per-checkpoint probe,
+  loaded pipelines, device placement, and cache clearing.
+- **`SwarmSubType.Audio`**, registered by AudioLab the way `LLM` is by LLMAssistant.
+
+### Fixed
+
+- **Wire names are now checked mechanically.** A test diffs every `[JsonProperty]` on `GenerationRequest` against
+  a checked-in `ListT2IParams` snapshot. SwarmUI drops a name it does not recognise without erroring, so a typo
+  costs a parameter that never applies and never complains; the rule was previously enforced by review alone.
+  The snapshot was captured with the API-Backends, AudioLab and HartsyInference extensions loaded, and a test
+  asserts ids from each are present so the suite cannot pass vacuously.
+
+### Notes
+
+- The sentinels that mean "off" (`refinermodel` = `"(Use Base)"`, `refinerupscale` = `1`, `refinervae` =
+  `"None"`, `refinerdotiling` = `false`) are documented on each property. They are each the parameter's own
+  default, but `ToNet` does not emit `ignore_if`, so the fact that default-equals-off is not discoverable from
+  `ListT2IParams`. Emitting `ignore_if` would be a one-line change in SwarmUI core; until then this is
+  documentation, not discovery.
+
 ## 0.9.8-beta
 
 Music generation parameters for the AudioLab extension. Every name in this release was diffed against a live
@@ -28,6 +94,43 @@ consumes them (`unused_parameters` reported only the stock image params a music 
   score) rather than a `YuE2` prefix, because SwarmUI strips digits from parameter ids and a prefixed name would
   collide with YuE v1. The C# properties keep the `Yue2` prefix; the wire names do not.
 - ~100 AudioLab TTS, STT and cloud-provider parameters remain uncovered. Music was this release's scope.
+
+## 0.9.7-beta
+
+### Changed
+
+- `GenerationRequest` became a partial class and the AudioLab-only parameters moved to
+  `Extensions/AudioLab/Contracts/GenerationRequest.AudioLab.cs`, so each extension's surface sits with the rest
+  of that extension. Same wire payload and same names.
+- Dropped the image-to-3D parameters added in 0.9.6. They were named after HartsyInference's own request type
+  rather than a registered SwarmUI parameter, and no SwarmUI extension exposes image-to-3D yet.
+
+## 0.9.6-beta
+
+### Added
+
+- Image-to-3D parameters on `GenerationRequest`. Reverted in 0.9.7.
+
+## 0.9.5-beta
+
+### Fixed
+
+- `StreamGenerationAsync` accepts a request carrying an audio input instead of a prompt, because speech-to-text
+  and voice conversion are driven by a clip rather than words.
+- `Sampler` is nullable so it can be omitted entirely. Several video models sample with their own solver and
+  SwarmUI refuses any request that names a sampler at all.
+
+## 0.9.4-beta / 0.9.3-beta
+
+Never released. The version counter jumped 0.9.2 to 0.9.5 in a single commit.
+
+## 0.9.2-beta
+
+### Added
+
+- Text-to-video parameters (`textvideoframes`, `videofps`, `videoformat`) and AudioLab's music, sound-effect and
+  speech parameters on `GenerationRequest`, each carrying its exact SwarmUI wire name. All nullable, so
+  `NullValueHandling.Ignore` keeps them out of payloads that do not set them.
 
 ## 0.9.1-beta
 
