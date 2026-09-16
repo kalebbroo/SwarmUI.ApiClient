@@ -58,13 +58,20 @@ SwarmUI source rather than taken on trust, and the diff is now a test.
   The snapshot was captured with the API-Backends, AudioLab and HartsyInference extensions loaded, and a test
   asserts ids from each are present so the suite cannot pass vacuously.
 
+- **`SwarmParamOffValues`**, the value each parameter carries to mean "off" (SwarmUI's `IgnoreIf`), for all 106
+  parameters that declare one — not only the four refiner sentinels. `ToNet` does not emit `ignore_if`, so this
+  cannot be discovered from `ListT2IParams` or verified at runtime; it is extracted from `T2IParamTypes.cs` and
+  `ComfyUIBackendExtension.cs` and mirrored here so consumers do not each hand-maintain the same list.
+- **`SwarmParamRegistrySnapshot`**, the registered parameter ids this package was built against, shipped as an
+  embedded resource so a consuming codebase can run its own drift test against the same fixture this library
+  uses rather than capturing a second one that drifts independently.
+
 ### Notes
 
-- The sentinels that mean "off" (`refinermodel` = `"(Use Base)"`, `refinerupscale` = `1`, `refinervae` =
-  `"None"`, `refinerdotiling` = `false`) are documented on each property. They are each the parameter's own
-  default, but `ToNet` does not emit `ignore_if`, so the fact that default-equals-off is not discoverable from
-  `ListT2IParams`. Emitting `ignore_if` would be a one-line change in SwarmUI core; until then this is
-  documentation, not discovery.
+- **"Equals default" is not the same as "off".** It holds for 103 of the 106 parameters that declare an off
+  value, and fails for three: `maskblur` defaults to 4 and is off at 0, `easycachestart` defaults to 0.15 and is
+  off at 0, `easycacheend` defaults to 0.95 and is off at 1. That is why `SwarmParamOffValues` is a table rather
+  than a rule. Emitting `ignore_if` from `ToNet` would be a one-line change in SwarmUI core and would retire it.
 
 ## 0.9.8-beta
 

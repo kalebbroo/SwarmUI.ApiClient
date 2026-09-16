@@ -21,7 +21,4 @@
     <ProjectReference Include="..\SwarmUI.ApiClient.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include="Snapshots\**\*" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
 </Project>

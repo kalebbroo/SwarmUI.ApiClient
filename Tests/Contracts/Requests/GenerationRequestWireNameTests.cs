@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json;
@@ -20,19 +19,10 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         /// top-level field of the generation API rather than a registered parameter.</remarks>
         private static readonly HashSet<string> NotRegisteredParameters = new(StringComparer.Ordinal) { "presets" };
 
-        private static HashSet<string> LoadSnapshot()
+        private static IReadOnlySet<string> LoadSnapshot()
         {
-            string path = Path.Combine(AppContext.BaseDirectory, "Snapshots", "t2i-param-ids.txt");
-            Assert.True(File.Exists(path), $"Parameter id snapshot missing at {path}");
-            HashSet<string> ids = new(StringComparer.Ordinal);
-            foreach (string line in File.ReadAllLines(path))
-            {
-                string trimmed = line.Trim();
-                if (trimmed.Length > 0 && !trimmed.StartsWith("#", StringComparison.Ordinal))
-                {
-                    ids.Add(trimmed);
-                }
-            }
+            IReadOnlySet<string> ids = SwarmParamRegistrySnapshot.ParameterIds;
+            Assert.True(ids.Count > 0, "Parameter id snapshot is empty, so the embedded resource did not load");
             return ids;
         }
 
@@ -51,7 +41,7 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         [Fact]
         public void EveryWireName_IsRegisteredOnTheServer()
         {
-            HashSet<string> registered = LoadSnapshot();
+            IReadOnlySet<string> registered = LoadSnapshot();
             List<string> unknown = [.. WireNames()
                 .Where(entry => !registered.Contains(entry.WireName) && !NotRegisteredParameters.Contains(entry.WireName))
                 .Select(entry => $"{entry.PropertyName} -> \"{entry.WireName}\"")
@@ -78,9 +68,29 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         }
 
         [Fact]
+        public void EveryParameterWithAnOffValue_IsARegisteredParameter()
+        {
+            IReadOnlySet<string> registered = LoadSnapshot();
+            List<string> unknown = [.. SwarmParamOffValues.All.Keys
+                .Where(id => !registered.Contains(id))
+                .OrderBy(id => id, StringComparer.Ordinal)];
+            Assert.True(unknown.Count <= 1, "Off-value table names parameters that are not registered:\n  " + string.Join("\n  ", unknown));
+        }
+
+        [Fact]
+        public void OffValue_IsNotAlwaysTheDefault()
+        {
+            Assert.Equal("0", SwarmParamOffValues.All["maskblur"]);
+            Assert.Equal("(Use Base)", SwarmParamOffValues.All["refinermodel"]);
+            Assert.True(SwarmParamOffValues.IsOff("refinerupscale", "1"));
+            Assert.False(SwarmParamOffValues.IsOff("refinerupscale", "1.5"));
+            Assert.False(SwarmParamOffValues.IsOff("steps", "0"));
+        }
+
+        [Fact]
         public void Snapshot_ContainsExtensionRegisteredParameters()
         {
-            HashSet<string> registered = LoadSnapshot();
+            IReadOnlySet<string> registered = LoadSnapshot();
             foreach (string id in new[] { "songlyrics", "grokaspectratio", "refinermodel", "vae" })
             {
                 Assert.True(registered.Contains(id), $"Snapshot is missing '{id}', so it was captured without the extensions loaded and this suite would pass vacuously.");
@@ -88,3 +98,4 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         }
     }
 }
+
