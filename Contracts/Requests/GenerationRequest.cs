@@ -21,6 +21,9 @@ public partial class GenerationRequest
     /// <summary>Text description of what you want to generate. This is the primary input that guides the AI model.</summary>
     /// <value>Required. Cannot be null or empty.</value>
     /// <example>"a beautiful sunset over mountains, vibrant colors, dramatic clouds, 8k quality"</example>
+    /// <remarks>For music models this carries the <b>lyrics</b>, not the style — genre goes in
+    /// <see cref="Text2AudioStyle"/>. Getting those the wrong way round produces a plausible song that sings the
+    /// genre tags, which no error will warn you about.</remarks>
     [JsonProperty("prompt")]
     public string Prompt { get; set; } = string.Empty;
 
@@ -204,11 +207,41 @@ public partial class GenerationRequest
 
     #region Text To Audio
     /// <summary>How long the generated audio clip should be, in seconds ("Text2Audio Duration"). Server range 1–1000.</summary>
-    /// <remarks>Stock SwarmUI parameter. AudioLab's backend reads this first and falls back to its own
-    /// <see cref="MaxDuration"/>, so a request that sets both is steered by this one. Every provider clamps it to
-    /// what it can actually produce, so the returned clip may be shorter than asked.</remarks>
+    /// <remarks>Read as a ceiling by some models — short lyrics give a short song — and as a target by others, which
+    /// may stretch to fit. AudioLab's backend reads this first and falls back to its own <see cref="MaxDuration"/>,
+    /// so a request that sets both is steered by this one.</remarks>
     [JsonProperty("textaudioduration")]
     public float? Text2AudioDuration { get; set; }
+
+    /// <summary>Style or genre of the generated audio ("Text2Audio Style"), for example "upbeat indie pop, female vocals".</summary>
+    /// <remarks>This is where genre goes for ACE-Step, YuE2 and MiniMax Music 3; the <b>lyrics go in
+    /// <see cref="Prompt"/></b>. Those three dropped their own lyrics parameters on 2026-09-16 to match this
+    /// convention, so a request that puts genre in <see cref="Prompt"/> gets a song that sings the genre tags.</remarks>
+    [JsonProperty("textaudiostyle")]
+    public string? Text2AudioStyle { get; set; }
+
+    /// <summary>Tempo in beats per minute ("Text2Audio BPM"). Server range 10–300.</summary>
+    /// <remarks>Gated behind the <c>audio_ace_inputs</c> feature flag. Unlike AudioLab's retired <c>bpm</c>
+    /// parameter there is no 0 meaning "let the model choose" — the floor is 10, so omit it instead.</remarks>
+    [JsonProperty("textaudiobpm")]
+    public long? Text2AudioBpm { get; set; }
+
+    /// <summary>Musical key and scale ("Text2Audio Key Scale"), for example "C major". Gated behind <c>audio_ace_inputs</c>.</summary>
+    [JsonProperty("textaudiokeyscale")]
+    public string? Text2AudioKeyScale { get; set; }
+
+    /// <summary>Beats per bar ("Text2Audio Time Signature"): 2, 3, 4, 6. Gated behind <c>audio_ace_inputs</c>.</summary>
+    [JsonProperty("textaudiotimesignature")]
+    public string? Text2AudioTimeSignature { get; set; }
+
+    /// <summary>Language sung in the vocals ("Text2Audio Language"), for example "en" or "ja". Gated behind <c>audio_ace_inputs</c>.</summary>
+    [JsonProperty("textaudiolanguage")]
+    public string? Text2AudioLanguage { get; set; }
+
+    /// <summary>Container for the returned audio ("Audio Format"): mp3, wav, flac, ogg.</summary>
+    /// <remarks>Stock SwarmUI parameter. AudioLab registers its own <see cref="AudioOutputFormat"/> separately.</remarks>
+    [JsonProperty("audioformat")]
+    public string? AudioFormat { get; set; }
     #endregion
 
     #region Video

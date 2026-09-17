@@ -1,5 +1,25 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.11.1-beta
+
+Ships the half of 0.11.0-beta that never made it into the commit.
+
+### Fixed
+
+- **The six stock Text2Audio parameters 0.11.0-beta's notes describe were missing from the package.** A `git
+  checkout` of that file during an unrelated test reverted them while they were still uncommitted, so the release
+  removed AudioLab's retired names without adding the replacements: `Text2AudioStyle`, `Text2AudioBpm`,
+  `Text2AudioKeyScale`, `Text2AudioTimeSignature`, `Text2AudioLanguage` and `AudioFormat` are now actually present.
+  0.11.0-beta could set music lyrics, via `Prompt`, but had no way to set genre at all.
+- `Prompt` now carries the warning that for music models it holds the lyrics rather than the style.
+
+### Changed
+
+- **Dangling doc references now fail the build** (`CS1570`, `CS1574`, `CS1580`, `CS1581`, `CS1584` as errors). The
+  compiler had already spotted this: the release build warned that `Text2AudioStyle` could not be resolved,
+  because the docs still described a property that was no longer there. Nothing failed on a warning, so it shipped.
+- A test asserts the stock Text2Audio group is carried in full, since that group is the whole music contract.
+
 ## 0.11.0-beta
 
 Catches up with SwarmUI as of 2026-09-16. One change there is a silent wrong-output bug for anyone generating

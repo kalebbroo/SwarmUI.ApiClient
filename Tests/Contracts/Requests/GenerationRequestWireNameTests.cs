@@ -88,6 +88,15 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         }
 
         [Fact]
+        public void EveryTextToAudioParameter_IsCarried()
+        {
+            HashSet<string> carried = [.. WireNames().Select(entry => entry.WireName)];
+            string[] required = ["textaudioduration", "textaudiostyle", "textaudiobpm", "textaudiokeyscale", "textaudiotimesignature", "textaudiolanguage", "audioformat"];
+            List<string> absent = [.. required.Where(id => !carried.Contains(id))];
+            Assert.True(absent.Count == 0, "The stock Text2Audio group is the whole music contract, and these are not carried: " + string.Join(", ", absent));
+        }
+
+        [Fact]
         public void Snapshot_ContainsExtensionRegisteredParameters()
         {
             IReadOnlySet<string> registered = LoadSnapshot();

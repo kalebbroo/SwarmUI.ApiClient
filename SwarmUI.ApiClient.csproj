@@ -8,7 +8,7 @@
     <PackageId>SwarmUI.ApiClient</PackageId>
     <AssemblyName>SwarmUI.ApiClient</AssemblyName>
     <RootNamespace>SwarmUI.ApiClient</RootNamespace>
-    <Version>0.11.0-beta</Version>
+    <Version>0.11.1-beta</Version>
     <Authors>Hartsy</Authors>
     <Company>Hartsy</Company>
     <Description>C# client library for SwarmUI API. Provides strongly typed access to generation, model management, and server administration.</Description>
@@ -20,6 +20,10 @@
     <RepositoryType>git</RepositoryType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
+    <!-- A cref naming a member that does not exist is how a half-applied edit ships unnoticed: the docs still
+         describe the property, the compiler warns, and nothing fails. CS1574/CS1580/CS1581/CS1584 are that warning;
+         CS1570 is malformed doc XML. -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS1570;CS1574;CS1580;CS1581;CS1584</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
