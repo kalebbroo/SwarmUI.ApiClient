@@ -1,8 +1,8 @@
 # Registered T2I parameter ids from a live SwarmUI ListT2IParams response.
-# Captured 2026-09-14 with the API-Backends, AudioLab and HartsyInference extensions loaded,
+# Captured 2026-09-17 with the API-Backends, AudioLab and HartsyInference extensions loaded,
 # so extension-registered parameters are present and the drift test is not vacuous.
 # Refresh by re-running ListT2IParams and rewriting this file; lines starting with # are ignored.
-# 620 ids
+# 615 ids
 aceguidance
 acelmmodel
 acesourceaudio
@@ -42,6 +42,7 @@ aspectratio
 audiocrafttemperature
 audiocrafttopk
 audiocrafttopp
+audioformat
 audioinput
 audiooutputformat
 audioquality
@@ -55,7 +56,6 @@ azurestyledegree
 background
 barkvoice
 batchsize
-bpm
 cartesiamodel
 cartesiaspeed
 cartesiavoiceid
@@ -235,7 +235,6 @@ ippcfg
 justloadmodel
 kandinskyvideoduration
 kandinskyvideoresolution
-keyscale
 klinggenerateaudio
 klingnegativeprompt
 klingturbovideoduration
@@ -271,7 +270,6 @@ ltxvideoduration
 lumavideoaspectratio
 lumavideoduration
 lumavideoresolution
-lyrics
 magicpromptenhancement
 maskbehavior
 maskblur
@@ -289,7 +287,6 @@ minimaxhthreevideoduration
 minimaxhthreevideoresolution
 minimaxmusiccfgscale
 minimaxmusiclmprecision
-minimaxmusiclyrics
 minimaxmusicsteps
 minimaxvideoduration
 minp
@@ -474,7 +471,6 @@ sigmashift
 smartimagepromptresizing
 solver
 songguidance
-songlyrics
 songminimumtokens
 songpenaltywindow
 songrepetitionpenalty
@@ -521,7 +517,6 @@ textaudiotimesignature
 textencodedimage
 texttemperature
 textvideoframes
-timesignature
 topk
 topp
 torchcompile
@@ -536,6 +531,7 @@ usecfgzerostar
 useinpaintingencode
 useipadapter
 usereferenceonly
+usesparseattention
 usestylemodel
 usetcfg
 vae
@@ -584,7 +580,6 @@ viduvideoaspectratio
 viduvideoduration
 viduvideoresolution
 visualstyle
-vocallanguage
 volume
 vramactivationoffload
 vramcacheprecision

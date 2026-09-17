@@ -74,7 +74,7 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
             List<string> unknown = [.. SwarmParamOffValues.All.Keys
                 .Where(id => !registered.Contains(id))
                 .OrderBy(id => id, StringComparer.Ordinal)];
-            Assert.True(unknown.Count <= 1, "Off-value table names parameters that are not registered:\n  " + string.Join("\n  ", unknown));
+            Assert.True(unknown.Count == 0, "Off-value table names parameters that are not registered:\n  " + string.Join("\n  ", unknown));
         }
 
         [Fact]
@@ -91,7 +91,7 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         public void Snapshot_ContainsExtensionRegisteredParameters()
         {
             IReadOnlySet<string> registered = LoadSnapshot();
-            foreach (string id in new[] { "songlyrics", "grokaspectratio", "refinermodel", "vae" })
+            foreach (string id in new[] { "acousticsteps", "grokaspectratio", "refinermodel", "vae" })
             {
                 Assert.True(registered.Contains(id), $"Snapshot is missing '{id}', so it was captured without the extensions loaded and this suite would pass vacuously.");
             }

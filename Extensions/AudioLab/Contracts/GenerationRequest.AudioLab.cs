@@ -3,13 +3,19 @@ using Newtonsoft.Json;
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
 /// <summary>Generation parameters registered by the AudioLab server extension.</summary>
-/// <remarks>Only send parameters advertised by the selected model's feature flags. Each music provider reads its
+/// <remarks>
+/// <para><b>ACE-Step, YuE2 and MiniMax Music 3 read lyrics from <see cref="GenerationRequest.Prompt"/> and genre
+/// from <see cref="GenerationRequest.Text2AudioStyle"/>.</b> AudioLab dropped its own lyrics parameters for those
+/// three on 2026-09-16 to match core and the engine, which have always read it that way. YuE v1 and HeartMuLa keep
+/// theirs (<see cref="YuELyrics"/>, <see cref="HeartLibLyrics"/>) and are unaffected.</para>
+/// <para>Only send parameters advertised by the selected model's feature flags. Each music provider reads its
 /// own set and nothing from another's: ACE-Step (<c>acestep_music_params</c>, <c>acestep_cfg_params</c>,
 /// <c>acestep_lm_params</c>, <c>acestep_task_params</c>), Stable Audio (<c>stableaudio_music_params</c>), YuE2
 /// (<c>yue2_music_params</c>), YuE v1 (<c>yue_music_params</c>), HeartMuLa (<c>heartlib_music_params</c>),
 /// MiniMax Music 3 (<c>minimax_music3_params</c>), AudioCraft (<c>audiocraft_sampling</c>). YuE2's wire names read
 /// <c>song*</c> for the pass that renders audio and <c>score*</c> for the pass that plans an ABC score, rather than
-/// carrying a YuE2 prefix, because SwarmUI strips digits from parameter ids and the prefix would collide with YuE v1.</remarks>
+/// carrying a YuE2 prefix, because SwarmUI strips digits from parameter ids and the prefix would collide with YuE v1.</para>
+/// </remarks>
 public partial class GenerationRequest
 {
     /// <summary>Container for the returned audio ("Audio Output Format"): wav_16, wav_32, flac, mp3, ogg.</summary>
@@ -19,14 +25,6 @@ public partial class GenerationRequest
     /// <summary>Encoding quality for the returned audio ("Audio Quality"): low, medium, high, max.</summary>
     [JsonProperty("audioquality")]
     public string? AudioQuality { get; set; }
-
-    // --- Music generation ---
-    /// <summary>Lyrics for ACE-Step ("Lyrics"). "[Instrumental]" for no vocals.</summary>
-    /// <remarks>ACE-Step only. Every other music provider has its own lyrics parameter: <see cref="Yue2Lyrics"/>,
-    /// <see cref="YuELyrics"/>, <see cref="HeartLibLyrics"/>, <see cref="MiniMaxMusic3Lyrics"/>. Sending this one
-    /// to a YuE2 model does nothing — SwarmUI accepts the name and the provider never reads it.</remarks>
-    [JsonProperty("lyrics")]
-    public string? Lyrics { get; set; }
 
     /// <summary>Denoising steps for audio models ("Infer Steps"); 0 uses the model's own default. Server range 0–200.</summary>
     [JsonProperty("infersteps")]
@@ -43,22 +41,6 @@ public partial class GenerationRequest
     /// <summary>Free-text musical style/genre tags ("Music Style").</summary>
     [JsonProperty("musicstyle")]
     public string? MusicStyle { get; set; }
-
-    /// <summary>Tempo in beats per minute ("BPM"); 0 lets the model choose. Server range 0–300.</summary>
-    [JsonProperty("bpm")]
-    public int? Bpm { get; set; }
-
-    /// <summary>Musical key and mode ("Key Scale"), e.g. "C major". Empty lets the model choose.</summary>
-    [JsonProperty("keyscale")]
-    public string? KeyScale { get; set; }
-
-    /// <summary>Beats per bar ("Time Signature"): 2, 3, 4, 6.</summary>
-    [JsonProperty("timesignature")]
-    public string? TimeSignature { get; set; }
-
-    /// <summary>Language sung in the vocals ("Vocal Language"), e.g. "en", "ja". "unknown" lets the model choose.</summary>
-    [JsonProperty("vocallanguage")]
-    public string? VocalLanguage { get; set; }
 
     /// <summary>Denoising steps for Stable Audio models ("Stable Audio Steps"). Server range 1–100.</summary>
     [JsonProperty("stableaudiosteps")]
@@ -154,11 +136,6 @@ public partial class GenerationRequest
     /// <summary>Noise injected into the cover task for variation ("Cover Noise"). Server range 0–1.</summary>
     [JsonProperty("covernoise")]
     public float? AceCoverNoise { get; set; }
-
-    /// <summary>Lyrics for YuE2 ("Song Lyrics"), section tags such as [verse] / [chorus] each on their own line.</summary>
-    /// <remarks>Style and genre tags belong in <see cref="GenerationRequest.Prompt"/>, not here.</remarks>
-    [JsonProperty("songlyrics")]
-    public string? Yue2Lyrics { get; set; }
 
     /// <summary>How much YuE2 plans before rendering ("Score Planning Mode"): full, melody, off.</summary>
     [JsonProperty("scoreplanningmode")]
@@ -281,10 +258,6 @@ public partial class GenerationRequest
     /// <summary>Top-K token limit ("HeartLib Top K"). Server range 1–500.</summary>
     [JsonProperty("heartlibtopk")]
     public int? HeartLibTopK { get; set; }
-
-    /// <summary>Lyrics for MiniMax Music 3 ("MiniMax Music 3 Lyrics"). Each section tag must be on its own line.</summary>
-    [JsonProperty("minimaxmusiclyrics")]
-    public string? MiniMaxMusic3Lyrics { get; set; }
 
     /// <summary>Flow-matching guidance strength ("MiniMax Music 3 CFG Scale"); the reference recipe uses 1.7. Server range 0.1–10.</summary>
     [JsonProperty("minimaxmusiccfgscale")]

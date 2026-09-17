@@ -259,11 +259,17 @@ public class T2IParamDefinition
     [JsonProperty("advanced")]
     public bool Advanced { get; set; }
 
-    /// <summary>Optional feature flag that must be enabled on the server for this parameter
-    /// to be relevant. Allows SwarmUI to expose parameters conditionally based on
-    /// server capabilities.</summary>
+    /// <summary>Feature flags that must be enabled on the server for this parameter to be relevant, comma separated.</summary>
+    /// <remarks>This is a list, not one value: the ACE-Step inputs carry <c>"text2audio,audio_ace_inputs"</c>.
+    /// Comparing the raw string to a single flag misses those, so use <see cref="FeatureFlags"/>.</remarks>
     [JsonProperty("feature_flag")]
     public string? FeatureFlag { get; set; }
+
+    /// <summary><see cref="FeatureFlag"/> split into individual flags. Empty when the parameter declares none.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> FeatureFlags => string.IsNullOrEmpty(FeatureFlag)
+        ? Array.Empty<string>()
+        : FeatureFlag!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary>Indicates whether the parameter can be toggled on/off as a unit in the UI.</summary>
     [JsonProperty("toggleable")]

@@ -1,5 +1,47 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.11.0-beta
+
+Catches up with SwarmUI as of 2026-09-16. One change there is a silent wrong-output bug for anyone generating
+music through 0.10.0-beta, which is why this is a same-week follow-up rather than a batched release.
+
+### Breaking changes
+
+- **Seven properties removed, because the server stopped registering their names.** AudioLab retired its own
+  lyrics, BPM, key, time-signature and vocal-language parameters on 2026-09-16 so that ACE-Step, YuE2 and MiniMax
+  Music 3 speak core's convention instead: `Lyrics`, `Yue2Lyrics`, `MiniMaxMusic3Lyrics`, `Bpm`, `KeyScale`,
+  `TimeSignature`, `VocalLanguage`.
+- **Lyrics now go in `Prompt`, and genre in the new `Text2AudioStyle`** — the reverse of what those three models
+  took before. SwarmUI drops an unrecognised name with only a server-side log, so a 0.10.0-beta caller who put
+  genre in `Prompt` and lyrics in `Lyrics` gets a plausible song that sings the genre tags, with no error anywhere.
+  The four non-lyrics parameters are remapped server-side and still function under their old names; they are
+  repointed here anyway, because a remap is not a contract.
+- YuE v1 (`YuELyrics`) and HeartMuLa (`HeartLibLyrics`) keep their own lyrics parameters and are unaffected.
+
+### Added
+
+- **`Text2AudioStyle`**, **`Text2AudioBpm`**, **`Text2AudioKeyScale`**, **`Text2AudioTimeSignature`** and
+  **`Text2AudioLanguage`**, the stock parameters that took over from the retired AudioLab ones. The four ACE
+  inputs are gated behind the new `audio_ace_inputs` feature flag. Note `Text2AudioBpm` has a floor of 10 and no
+  "0 means let the model choose", which the retired `bpm` had.
+- **`AudioFormat`** (`audioformat`), a new stock parameter: mp3, wav, flac, ogg. Distinct from AudioLab's own
+  `AudioOutputFormat`.
+- **`T2IParamDefinition.FeatureFlags`**, splitting `feature_flag` into its parts. It is a comma-separated list,
+  not one value — the ACE inputs now carry `"text2audio,audio_ace_inputs"` — so code comparing the raw string to
+  a single flag silently stops matching them.
+
+### Changed
+
+- The shipped `SwarmParamRegistrySnapshot` is recaptured against the current server: 615 ids, down from 620.
+
+### Notes
+
+- Checked and unchanged: `T2IModel.ToNetObject` (so all 29 `ModelInfo` fields still hold), both `ToNet` methods
+  (28 parameter keys, 9 group keys), the `ListT2IParams` top-level shape, every `IgnoreIf` sentinel in
+  `SwarmParamOffValues`, and the endpoint lists of both wrapped extensions.
+- Core's own YuE2 support (SwarmUI #1539) registers no new parameters — it adds a model class and workflow
+  generation and reuses the existing Text2Audio group.
+
 ## 0.10.0-beta
 
 Contract release. Every gap here is a field the server already sent and the client discarded, or a parameter the
