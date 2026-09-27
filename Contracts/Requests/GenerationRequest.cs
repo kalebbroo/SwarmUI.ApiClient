@@ -357,7 +357,7 @@ public partial class GenerationRequest
     /// <summary>Image-variation seed. ("Variation Seed").</summary>
     /// <remarks>Combined partially with the original seed to create a similar-but-different image for the same seed. -1 = random. Server range -1–4294967295. Server default: <c>-1</c>. Gated behind the <c>variation_seed</c> feature flag.</remarks>
     [JsonProperty("variationseed")]
-    public int? VariationSeed { get; set; }
+    public long? VariationSeed { get; set; }
 
     /// <summary>How strongly to apply the variation seed. ("Variation Seed Strength").</summary>
     /// <remarks>0 = don't use, 1 = replace the base seed entirely. 0.5 is a good value. Server range 0–1. Server default: <c>0</c>. Gated behind the <c>variation_seed</c> feature flag.</remarks>
@@ -698,7 +698,7 @@ public partial class GenerationRequest
     /// <summary>Wildcard selection seed. ("Wildcard Seed").</summary>
     /// <remarks>If enabled, this seed will be used for selecting entries from wildcards. If disabled, the image seed will be used. -1 = random. Server range -1–4294967295. Server default: <c>-1</c>.</remarks>
     [JsonProperty("wildcardseed")]
-    public int? WildcardSeed { get; set; }
+    public long? WildcardSeed { get; set; }
 
     /// <summary>How Wildcard Seed should behave. ("Wildcard Seed Behavior").</summary>
     /// <remarks>If 'Random', seed is a random seed. If 'Index', the seed is a 0-based index into the wildcard list. (Eg if you have 5 entries, seed 0 gets the first entry, seed 4 gets the last entry, seed 5 goes back to the first entry again.) Allowed values: <c>Random</c>, <c>Index</c>.</remarks>
