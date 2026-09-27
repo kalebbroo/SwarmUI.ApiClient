@@ -1,5 +1,56 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.12.0-beta
+
+Closes the gap between `GenerationRequest` and SwarmUI's actual registered parameter list. A diff of this file
+against a live `ListT2IParams` response (620 registered ids) turned up 368 with no property at all — everything
+from `maskimage` and `initimagemode` to entire ControlNet/IP-Adapter/VRAM-management families and two dozen
+fal.ai-fronted video providers. 362 of those are added here; the remaining 4 are internal UI-only placeholder
+params (`placeholderparamgroup*`) that do nothing and were correctly left out.
+
+### Added
+
+- **206 stock/ComfyUI properties on `GenerationRequest`**: the mask/init-image family (`MaskImage`,
+  `MaskBlur`/`MaskGrow`/`MaskShrinkGrow`, `InitImageNoise`, `InitImageRecompositeMask`, ...), `PromptImages` /
+  `PromptAudios` / `PromptVideos`, `VideoEndImage`, ControlNet units 1–3, IP-Adapter, FreeU, Dynamic Thresholding,
+  EasyCache/TeaCache, VAE tiling controls, regional prompting, segment refining, variation seed, SeedVR restore,
+  Grid Generator overrides, and the Swarm-internal/LLM-prompt-processing groups. All verified end-to-end with real
+  generations against a local ComfyUI backend, not just checked against the registry.
+- **`Extensions/APIBackends/Contracts/GenerationRequest.APIBackends.cs`** (new file): 106 new properties for the
+  ~25 additional providers the SwarmUI-API-Backends extension fronts through fal.ai (Kling, Luma, Veo, Pika, Sora,
+  Wan 2.2–2.7, Seedance, Hunyuan, Vidu, PixVerse, Kandinsky, Recraft, Nano Banana 2, GPT-Image-2, FLUX.2/3, and
+  more), grouped by provider. The five providers previously declared inline on `GenerationRequest` (BFL, OpenAI,
+  Ideogram, Google, Grok — 22 properties) move into this same file unchanged, so every paid-API-backend parameter
+  now lives in one place instead of being split between the core file and here.
+- **`Extensions/HartsyInference/Contracts/GenerationRequest.HartsyInference.cs`** (new file): 50 properties
+  specific to that extension — ACE-Step editing/planner, Wan-Animate, Ideogram 4, MiniMax Music, audio reference,
+  and (see Fixed) `CfgRescale`, `InitImageMode`, the Restore/SeedVR family, and the VRAM & Memory family.
+
+### Fixed
+
+- **16 properties were briefly placed on the core `GenerationRequest` under the assumption that CFG Rescale, Init
+  Image Mode, Restore/SeedVR and VRAM management are generic ComfyUI features.** Live-testing against a real,
+  vanilla ComfyUI backend proved otherwise: all 16 come back with "Request requires flag 'hartsyinference' which
+  is not present on the backend". Checked against SwarmUI's own source, `SwarmUIHartsyInference.cs` is the only
+  place any of them are registered. They now live on the HartsyInference extension file instead, where a backend
+  mismatch is expected rather than surprising.
+
+### Notes
+
+- Live-verified with real generations (small SD1.5 checkpoint, low step count) rather than registry inspection
+  alone: FreeU, Dynamic Thresholding, Self-/Perturbed-Attention Guidance, Rescale CFG, Swarm Internal flags,
+  Variation Seed, the mask/init-image family, EasyCache/TeaCache, Grid Generator overrides, and ControlNet units
+  1–3 with a real canny model. IP-Adapter's parameters reach the server with exactly the value SwarmUI's own
+  dropdown advertised, but the installed `ComfyUI_IPAdapter_plus` node version rejects it — a SwarmUI/ComfyUI-node
+  compatibility issue, not a defect here.
+- Not live-exercised (verified against the registry only, same bar as every property added before this release):
+  video-gated properties, SAM2/segment refining, regional prompting/GLIGEN, the text-encoder-swap family
+  (SD3/Flux-class models), LLM prompt processing, and — per the paid-API-backend properties' own nature — every
+  fal.ai/BFL/OpenAI/Ideogram/Google/Grok and HartsyInference-only property.
+- `loras` / `loraweights` were excluded from the added set: they are already handled by `Loras` (`[JsonIgnore]`)
+  and `GenerationEndpoint.CreateGenerationPayload`'s post-pass, so a direct property would have raced it for the
+  same wire keys.
+
 ## 0.11.1-beta
 
 Ships the half of 0.11.0-beta that never made it into the commit.
