@@ -2,7 +2,7 @@
 
 **Professional C# client library for SwarmUI API**
 
-🚧 **v0.8.0-beta** 🚧
+🚧 **v0.12.0-beta** 🚧
 
 SwarmUI.ApiClient is a strongly-typed C# wrapper around the SwarmUI API, providing first-class support for text-to-image generation, model management, presets, user data, backends, and admin operations. The core implementation is in place and covered by unit tests; the API surface may still evolve before a 1.0.0 stable release.
 
