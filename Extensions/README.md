@@ -12,7 +12,7 @@ visible in the folder tree, the namespace, and the call site.
 | Extension | Folder | Accessed via | Endpoints | Repository |
 | --- | --- | --- | --- | --- |
 | AudioLab | `AudioLab/` | `client.Extensions.AudioLab` | 18 | https://github.com/HartsyAI/SwarmUI-AudioLab |
-| LLM Assistant | `LLMAssistant/` | `client.Extensions.LLMAssistant` | 51 | https://github.com/HartsyAI/SwarmUI-LLMAssistant |
+| LLM Assistant | `LLMAssistant/` | `client.Extensions.LLMAssistant` | 52 | https://github.com/HartsyAI/SwarmUI-LLMAssistant |
 | MagicPrompt | `MagicPrompt/` | `client.Extensions.MagicPrompt` | 1 | https://github.com/HartsyAI/SwarmUI-MagicPromptExtension |
 | API Backends | `APIBackends/` | `client.Extensions.APIBackends` | 1 | https://github.com/HartsyAI/SwarmUI-API-Backends |
 | HartsyInference Backend | `HartsyInference/` | `client.Extensions.HartsyInference` | 5 | https://github.com/HartsyAI/SwarmUI-HartsyInference-Backend |
@@ -31,8 +31,9 @@ through this folder:
   music provider — ACE-Step, Stable Audio, AudioCraft, YuE2, YuE v1, HeartMuLa, MiniMax Music 3 — plus the
   speech and transcription parameters shared across TTS and STT models. Per-provider TTS/STT voice and
   tuning parameters are not covered yet. `Extensions/AudioLab` covers what the generation pipeline does not:
-  direct synthesis and transcription, engine and model management, format conversion, time stretch, and DAW
-  project storage.
+  direct synthesis and transcription, engine and model management, format conversion, time stretch, DAW
+  project storage, and (`AudioLabVoiceSessionClient`, constructed directly rather than through
+  `client.Extensions.AudioLab`) a real-time, phone-call-style voice agent session.
 - **API Backends** and **HartsyInference Backend** both register generation parameters and a backend type into
   stock SwarmUI, so generating through them runs on `client.Generation`. Their own endpoints answer the question
   a request cannot: what a given model will actually accept. `APIBackendsListModelCapabilities` reports each API

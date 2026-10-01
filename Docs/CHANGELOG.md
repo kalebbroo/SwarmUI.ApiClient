@@ -1,5 +1,52 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.13.0-beta
+
+Typed support for AudioLab's new real-time voice agent session (SwarmUI-AudioLab PR #34) and LLM Assistant's
+matching stateless turn endpoint, plus a fix for a client/server mismatch on an existing AudioLab endpoint that
+has never actually worked.
+
+### Added
+
+- **`AudioLabVoiceSessionClient`** (`Extensions/AudioLab/AudioLabVoiceSessionClient.cs`, new): a duplex client
+  for `AudioLabVoiceSession`, AudioLab's phone-call-style WebSocket route. Its wire protocol mixes JSON (the
+  `start` handshake, events, the client's `end`) with binary audio (mono PCM16 both directions, server replies
+  additionally turn-tagged with a 4-byte little-endian id), so it cannot go through the existing
+  `ISwarmWebSocketClient.StreamFramesAsync`, which only ever UTF8-decodes every message. Exposes `Events`
+  (`IAsyncEnumerable<VoiceSessionEvent>`: state/transcript/bargein/tool_call/tool_result/notice/metrics/error) and
+  `ReplyAudio` (`IAsyncEnumerable<VoiceSessionAudioFrame>`: decoded, turn-tagged reply audio) as two independent
+  streams fed by one background pump, `SendAudioAsync` for mic input, and `EndAsync`/`DisposeAsync` that both
+  complete the WebSocket close handshake rather than aborting the connection. Shares `SwarmWebSocketClient`'s own
+  connect-retry, auth, and close-handshake logic through a new internal `WebSocketConnectionHelpers` (extracted
+  from `SwarmWebSocketClient`'s private `ApplyAuth`/connect-pipeline/`GracefulCloseAsync`, which now delegate to
+  it) so both clients get the same behavior rather than a second implementation that could drift.
+- **`VoiceTurnRequest`/`VoiceTurnUpdate`** and **`ILLMAssistantEndpoint.StreamVoiceTurnAsync`**
+  (`Extensions/LLMAssistant/`): typed support for `LLMAssistantVoiceTurnWS`, a stateless turn endpoint (the
+  caller sends the full conversation every turn; nothing is persisted to a thread) streaming
+  chunk/native_tool_call/tool_result/notice/done/error frames. Pure JSON, unlike the AudioLab route above, so it
+  reuses the existing `StreamFramesAsync` plumbing directly -- the close handshake it already performs in its own
+  `finally` block needed nothing added for this route specifically (pinned by a new test that drives the real
+  `SwarmWebSocketClient` over a scripted socket and asserts the close, not just the happy-path frames).
+
+### Fixed
+
+- **`GetInstallationProgressAsync` called a route the server has never registered.** `AudioLabEndpoint` and
+  `IAudioLabEndpoint` had a `GetInstallationProgressAsync` method posting to `"GetInstallationProgress"`, with an
+  `AudioInstallationProgressResponse` contract shaped like a percent/step/package progress poll. Grepping the
+  AudioLab server's actual `API.RegisterAPICall` calls (`AudioAPI/AudioLabAPI.cs`) turns up no such route at
+  all -- only `GetInstallationStatus`, whose response is `{success, engine_available, engine_ready, providers}`,
+  already correctly modeled by the existing `AudioInstallationStatusResponse` and already wired up as
+  `GetInstallationStatusAsync`. This was never a shape mismatch to reconcile: every call through
+  `GetInstallationProgressAsync` would have failed outright against a real server, 100% of the time. Removed the
+  method and its dead contract class; added a test pinning `GetInstallationStatusAsync`'s real request (no body)
+  and response shape, which had no test at all before this.
+
+### Notes
+
+- `Tests/TestDoubles.cs`'s `FakeClientWebSocket` gained a `BinaryFrame` step (and tracks sent binary messages
+  separately from text ones) for the new AudioLab voice session tests; existing text-only scripts and assertions
+  are unaffected.
+
 ## 0.12.0-beta
 
 Closes the gap between `GenerationRequest` and SwarmUI's actual registered parameter list. A diff of this file
