@@ -113,6 +113,7 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
     /// <summary>One scripted receive step: either a text payload (possibly split across reads), a close frame, an exception, or a delay.</summary>
     public abstract record Step;
     public sealed record TextFrame(string Json) : Step;
+    public sealed record BinaryFrame(byte[] Bytes) : Step;
     public sealed record CloseFrame : Step;
     public sealed record ThrowStep(Exception Exception) : Step;
     public sealed record HangStep : Step;
@@ -120,7 +121,9 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
     private readonly Queue<Step> _steps;
     private byte[]? _pending;
     private int _pendingOffset;
+    private WebSocketMessageType _pendingType = WebSocketMessageType.Text;
     public readonly List<string> SentMessages = [];
+    public readonly List<byte[]> SentBinaryMessages = [];
     public readonly Dictionary<string, string> Headers = [];
     public bool Disposed;
     public bool CloseOutputCalled;
@@ -156,7 +159,14 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
 
     public Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
-        SentMessages.Add(Encoding.UTF8.GetString(buffer.Array!, buffer.Offset, buffer.Count));
+        if (messageType == WebSocketMessageType.Binary)
+        {
+            SentBinaryMessages.Add(buffer.ToArray());
+        }
+        else
+        {
+            SentMessages.Add(Encoding.UTF8.GetString(buffer.Array!, buffer.Offset, buffer.Count));
+        }
         return Task.CompletedTask;
     }
 
@@ -184,6 +194,12 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
                 case TextFrame text:
                     _pending = Encoding.UTF8.GetBytes(text.Json);
                     _pendingOffset = 0;
+                    _pendingType = WebSocketMessageType.Text;
+                    break;
+                case BinaryFrame binary:
+                    _pending = binary.Bytes;
+                    _pendingOffset = 0;
+                    _pendingType = WebSocketMessageType.Binary;
                     break;
             }
         }
@@ -196,7 +212,7 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
         {
             _pending = null;
         }
-        return new WebSocketReceiveResult(count, WebSocketMessageType.Text, end);
+        return new WebSocketReceiveResult(count, _pendingType, end);
     }
 
     public Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)

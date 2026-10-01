@@ -3,7 +3,6 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Net;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -129,25 +128,7 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
             try
             {
                 // Each connect attempt needs a fresh socket — a ClientWebSocket can only be connected once.
-                socket = await _connectPipeline.ExecuteAsync(
-                    async (state, ct) =>
-                    {
-                        IClientWebSocket attempt = state.self._socketFactory.Create();
-                        try
-                        {
-                            attempt.SetKeepAliveInterval(state.self._options.KeepAliveInterval);
-                            state.self.ApplyAuth(attempt);
-                            await attempt.ConnectAsync(state.wsUri, ct).ConfigureAwait(false);
-                            return attempt;
-                        }
-                        catch
-                        {
-                            attempt.Dispose();
-                            throw;
-                        }
-                    },
-                    (self: this, wsUri),
-                    cancellationToken).ConfigureAwait(false);
+                socket = await WebSocketConnectionHelpers.ConnectWithRetryAsync(_socketFactory, _options, _connectPipeline, wsUri, cancellationToken).ConfigureAwait(false);
                 _logger.LogDebug("WebSocket connected: {Endpoint} (session key '{Key}')", endpoint, sessionKey);
                 JObject payload = (JObject)request.DeepClone();
                 payload["session_id"] = sessionId;
@@ -205,26 +186,6 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
                     socket?.Dispose();
                 }
             }
-        }
-    }
-
-    /// <summary>Applies header or cookie authentication to a socket per <see cref="SwarmClientOptions.AuthMode"/>.</summary>
-    private void ApplyAuth(IClientWebSocket socket)
-    {
-        if (string.IsNullOrEmpty(_options.Authorization))
-        {
-            return;
-        }
-        if (_options.AuthMode == SwarmAuthMode.SwarmTokenCookie)
-        {
-            CookieContainer cookies = new();
-            cookies.Add(new Uri(_options.NormalizedBaseUrl), new Cookie("swarm_token", _options.Authorization));
-            socket.SetCookies(cookies);
-        }
-        else
-        {
-            string headerName = string.IsNullOrWhiteSpace(_options.AuthorizationHeaderName) ? "Authorization" : _options.AuthorizationHeaderName;
-            socket.SetRequestHeader(headerName, _options.Authorization);
         }
     }
 
@@ -309,53 +270,12 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
     }
 
     /// <summary>Best-effort RFC 6455 close handshake; swallows all cleanup errors.</summary>
-    private async Task GracefulCloseAsync(IClientWebSocket socket, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-            {
-                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None).ConfigureAwait(false);
-                using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                cts.CancelAfter(_options.WebSocketCloseTimeout);
-                byte[] buffer = new byte[512];
-                while (socket.State is WebSocketState.CloseSent && !cts.IsCancellationRequested)
-                {
-                    try
-                    {
-                        WebSocketReceiveResult result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token).ConfigureAwait(false);
-                        if (result.MessageType is WebSocketMessageType.Close)
-                        {
-                            break;
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (WebSocketException)
-                    {
-                        break;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Exception during WebSocket graceful close (ignored)");
-        }
-        finally
-        {
-            try
-            {
-                socket.Dispose();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Exception disposing WebSocket (ignored)");
-            }
-        }
-    }
+    /// <remarks>Delegates to <see cref="WebSocketConnectionHelpers"/>, shared with
+    /// <see cref="SwarmUI.ApiClient.Extensions.AudioLab.AudioLabVoiceSessionClient"/> (whose mixed binary/JSON wire protocol cannot go through
+    /// <see cref="StreamFramesAsync"/>) so both get the same close behavior rather than two implementations that
+    /// could drift.</remarks>
+    private Task GracefulCloseAsync(IClientWebSocket socket, CancellationToken cancellationToken)
+        => WebSocketConnectionHelpers.GracefulCloseAsync(socket, _options.WebSocketCloseTimeout, _logger, cancellationToken);
 
     /// <inheritdoc />
     public async Task DisconnectAllAsync(CancellationToken cancellationToken = default)
