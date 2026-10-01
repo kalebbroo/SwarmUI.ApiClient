@@ -2,7 +2,7 @@
 
 **Professional C# client library for SwarmUI API**
 
-🚧 **v0.12.0-beta** 🚧
+🚧 **v0.13.0-beta** 🚧
 
 SwarmUI.ApiClient is a strongly-typed C# wrapper around the SwarmUI API, providing first-class support for text-to-image generation, model management, presets, user data, backends, and admin operations. The core implementation is in place and covered by unit tests; the API surface may still evolve before a 1.0.0 stable release.
 
@@ -59,6 +59,7 @@ SwarmUI.ApiClient/
     ├── AudioLab/                  # AudioLab extension
     │   ├── IAudioLabEndpoint.cs
     │   ├── AudioLabEndpoint.cs
+    │   ├── AudioLabVoiceSessionClient.cs # duplex voice session; constructed directly, not an I*Endpoint method
     │   └── Contracts/             # Contracts owned by this extension
     ├── LLMAssistant/              # LLM Assistant extension
     │   ├── ILLMAssistantEndpoint.cs
@@ -99,8 +100,10 @@ foreach (SwarmExtensionInfo info in client.Extensions.All)
 ```
 
 Supported extensions: **AudioLab** (speech synthesis and transcription, audio engine and model
-management, format conversion, DAW projects), **LLM Assistant** (streaming chat threads, assistants,
-tools, LLM model management, per-user memory), and **MagicPrompt** (prompt enhancement).
+management, format conversion, DAW projects, and a real-time voice agent session via
+`AudioLabVoiceSessionClient`), **LLM Assistant** (streaming chat threads, assistants, tools, LLM model
+management, per-user memory, and a stateless voice-turn endpoint for that same voice agent to answer
+through), and **MagicPrompt** (prompt enhancement).
 
 See [`Extensions/README.md`](./Extensions/README.md) for the supported extension registry and the
 steps for adding a new one.

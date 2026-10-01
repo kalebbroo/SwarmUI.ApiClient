@@ -30,7 +30,7 @@ public class AudioLabEndpoint : IAudioLabEndpoint
             "ProcessWorkflow",
             "GetAllProvidersStatus",
             "GetInstallationStatus",
-            "GetInstallationProgress",
+            "AudioLabVoiceSession",
             "AudioLabListEngines",
             "AudioLabInstallEngine",
             "AudioLabInstallAllModels",
@@ -138,13 +138,6 @@ public class AudioLabEndpoint : IAudioLabEndpoint
     {
         _logger.LogDebug("Checking audio installation status");
         return await _httpClient.PostJsonAsync<AudioInstallationStatusResponse>("GetInstallationStatus", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    public async Task<AudioInstallationProgressResponse> GetInstallationProgressAsync(CancellationToken cancellationToken = default)
-    {
-        _logger.LogDebug("Reading audio installation progress");
-        return await _httpClient.PostJsonAsync<AudioInstallationProgressResponse>("GetInstallationProgress", payload: null, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

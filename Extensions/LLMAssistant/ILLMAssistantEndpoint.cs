@@ -42,6 +42,17 @@ public interface ILLMAssistantEndpoint : ISwarmExtensionEndpoint
     /// <remarks>Streams the <c>LLMAssistantRegenerateWS</c> endpoint. The previous reply stays switchable through the branch pager.</remarks>
     IAsyncEnumerable<ChatStreamUpdate> StreamRegenerateAsync(ChatStreamRequest request, CancellationToken cancellationToken = default);
 
+    /// <summary>Runs one stateless turn and streams the reply, outside of any chat thread.</summary>
+    /// <param name="request">Turn request. The message list is required and must be non-empty.</param>
+    /// <param name="cancellationToken">Cancellation token for the operation.</param>
+    /// <returns>Streamed response frames.</returns>
+    /// <remarks>Streams the <c>LLMAssistantVoiceTurnWS</c> endpoint. Nothing is persisted server-side: the caller
+    /// sends the full conversation every turn, same as <c>HartsyInference.Voice</c>'s own turn loop (this
+    /// route's original caller) keeps it client-side rather than in a thread. Tool dispatch is fully resolved by
+    /// the server before the stream ends -- a <c>native_tool_call</c> frame is a live report, not a request for
+    /// the caller to execute anything, and its matching <c>tool_result</c> arrives later in the same stream.</remarks>
+    IAsyncEnumerable<VoiceTurnUpdate> StreamVoiceTurnAsync(VoiceTurnRequest request, CancellationToken cancellationToken = default);
+
     /// <summary>Creates a chat thread.</summary>
     /// <param name="assistantId">Assistant to bind the thread to. Falls back to the caller's active assistant when null.</param>
     /// <param name="title">Initial title. The server generates one later when null.</param>

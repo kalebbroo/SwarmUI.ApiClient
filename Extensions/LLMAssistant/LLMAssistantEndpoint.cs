@@ -28,6 +28,7 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
             "LLMAssistantSendMessageWS",
             "LLMAssistantEditMessageWS",
             "LLMAssistantRegenerateWS",
+            "LLMAssistantVoiceTurnWS",
             "LLMAssistantCreateThread",
             "LLMAssistantTestInstruction",
             "LLMAssistantUploadChatImage",
@@ -150,6 +151,18 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         }
         _logger.LogDebug("Streaming regeneration of message '{MessageId}' in thread '{ThreadId}'", request.MessageId, request.ThreadId);
         return StreamChatAsync("LLMAssistantRegenerateWS", request, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<VoiceTurnUpdate> StreamVoiceTurnAsync(VoiceTurnRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Messages is not { Count: > 0 })
+        {
+            throw new ArgumentException("Messages is required and must be non-empty", nameof(request));
+        }
+        _logger.LogDebug("Streaming voice turn with {MessageCount} message(s)", request.Messages.Count);
+        return StreamVoiceTurnFramesAsync(request, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -715,6 +728,21 @@ public class LLMAssistantEndpoint : ILLMAssistantEndpoint
         await foreach (JObject frame in _webSocketClient.StreamFramesAsync(endpoint, payload, _sessionKey, cancellationToken).ConfigureAwait(false))
         {
             ChatStreamUpdate update = frame.ToObject<ChatStreamUpdate>() ?? new ChatStreamUpdate();
+            update.Raw = frame;
+            yield return update;
+        }
+    }
+
+    /// <summary>Streams <c>LLMAssistantVoiceTurnWS</c>. A pure-JSON frame stream same as the chat endpoints above
+    /// (unlike AudioLab's voice session, nothing here is binary), so it goes through the same
+    /// <see cref="ISwarmWebSocketClient.StreamFramesAsync"/> plumbing -- session refresh, the close handshake, and
+    /// malformed-frame handling are already correct there, with nothing voice-specific to add.</summary>
+    private async IAsyncEnumerable<VoiceTurnUpdate> StreamVoiceTurnFramesAsync(VoiceTurnRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        JObject payload = JObject.FromObject(request);
+        await foreach (JObject frame in _webSocketClient.StreamFramesAsync("LLMAssistantVoiceTurnWS", payload, _sessionKey, cancellationToken).ConfigureAwait(false))
+        {
+            VoiceTurnUpdate update = frame.ToObject<VoiceTurnUpdate>() ?? new VoiceTurnUpdate();
             update.Raw = frame;
             yield return update;
         }
