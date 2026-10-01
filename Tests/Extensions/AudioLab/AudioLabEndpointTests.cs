@@ -159,6 +159,38 @@ namespace SwarmUI.ApiClient.Tests.Extensions.AudioLab
         }
 
         [Fact]
+        public async Task GetInstallationStatusAsync_PinsTheRealServerShape()
+        {
+            // Pins the real server shape (AudioAPI/AudioLabAPI.cs's GetInstallationStatus handler): no request
+            // body, and a response keyed engine_available/engine_ready/providers -- not the progress/step/
+            // completion shape a since-removed GetInstallationProgressAsync wrongly assumed existed on the wire.
+            // That method called a "GetInstallationProgress" route the server has never registered (confirmed by
+            // grepping AudioLabAPI.cs's RegisterAPICall calls): every call through it would have failed, not
+            // just returned mismatched fields. It is gone; this is the one real status/progress endpoint.
+            RecordingExtensionHttpClient httpClient = new RecordingExtensionHttpClient
+            {
+                ResponseToReturn = new JObject
+                {
+                    ["success"] = true,
+                    ["engine_available"] = true,
+                    ["engine_ready"] = false,
+                    ["providers"] = new JObject { ["kokoro"] = true, ["whisper"] = false }
+                }
+            };
+            AudioLabEndpoint endpoint = CreateEndpoint(httpClient, new RecordingExtensionWebSocketClient());
+
+            AudioInstallationStatusResponse response = await endpoint.GetInstallationStatusAsync(CancellationToken.None).ConfigureAwait(false);
+
+            Assert.Equal("GetInstallationStatus", httpClient.LastEndpoint);
+            Assert.False(httpClient.LastPayload!.HasValues); // no request body
+            Assert.True(response.Success);
+            Assert.True(response.EngineAvailable);
+            Assert.False(response.EngineReady);
+            Assert.True(response.Providers["kokoro"]);
+            Assert.False(response.Providers["whisper"]);
+        }
+
+        [Fact]
         public async Task StreamEngineInstallAsync_ParsesProgressAndTerminalFrames()
         {
             RecordingExtensionWebSocketClient webSocketClient = new RecordingExtensionWebSocketClient
@@ -248,6 +280,8 @@ namespace SwarmUI.ApiClient.Tests.Extensions.AudioLab
             Assert.Equal("AudioLab", endpoint.Extension.Name);
             Assert.Contains("ProcessTTS", endpoint.Extension.Endpoints);
             Assert.Contains("AudioLabInstallEngine", endpoint.Extension.Endpoints);
+            Assert.Contains("AudioLabVoiceSession", endpoint.Extension.Endpoints);
+            Assert.DoesNotContain("GetInstallationProgress", endpoint.Extension.Endpoints);
             Assert.False(string.IsNullOrWhiteSpace(endpoint.Extension.RepositoryUrl));
         }
     }

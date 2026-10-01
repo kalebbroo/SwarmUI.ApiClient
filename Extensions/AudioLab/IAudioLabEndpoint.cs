@@ -48,14 +48,10 @@ public interface IAudioLabEndpoint : ISwarmExtensionEndpoint
     /// <summary>Reports which providers are installed and whether the audio engine is ready.</summary>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>
     /// <returns>Engine availability and per-provider install state.</returns>
-    /// <remarks>Calls the <c>GetInstallationStatus</c> endpoint.</remarks>
+    /// <remarks>Calls the <c>GetInstallationStatus</c> endpoint. There is no separate progress-polling endpoint
+    /// to pair this with -- prefer <see cref="StreamEngineInstallAsync"/>, which reports progress directly, for
+    /// anything that needs to watch an install happen rather than just check whether one is needed.</remarks>
     Task<AudioInstallationStatusResponse> GetInstallationStatusAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>Reads the current installation progress.</summary>
-    /// <param name="cancellationToken">Cancellation token for the operation.</param>
-    /// <returns>Progress percentage, current step, and completion state.</returns>
-    /// <remarks>Calls the <c>GetInstallationProgress</c> endpoint. Poll this alongside a non-streaming install, or prefer <see cref="StreamEngineInstallAsync"/> which reports progress directly.</remarks>
-    Task<AudioInstallationProgressResponse> GetInstallationProgressAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Lists every audio engine with install state, capability flags, and model variants.</summary>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>
