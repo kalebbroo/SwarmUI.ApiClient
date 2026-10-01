@@ -69,9 +69,9 @@ public class VoiceTurnUpdate
     [JsonProperty("full_text")]
     public string? FullText { get; set; }
 
-    /// <summary>Wire stop reason, set alongside <see cref="Done"/>: "length", "cancelled"/"canceled", or null for
-    /// a normal finish. Never "tool_call" on the wire -- tool dispatch is fully resolved before <see cref="Done"/>
-    /// is sent, so there is nothing left for a caller to act on by the time a turn ends.</summary>
+    /// <summary>Wire stop reason, set alongside <see cref="Done"/>: "length", "cancelled", "error", "tool_call", or
+    /// null for a normal finish. "tool_call" means the server's tool loop hit its round limit while the model still
+    /// wanted another call; that last call was never dispatched, so treat the reply as cut short.</summary>
     [JsonProperty("stopReason")]
     public string? StopReason { get; set; }
 

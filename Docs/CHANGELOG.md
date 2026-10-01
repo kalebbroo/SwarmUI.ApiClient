@@ -30,7 +30,7 @@ has never actually worked.
 
 ### Fixed
 
-- **`GetInstallationProgressAsync` called a route the server has never registered.** `AudioLabEndpoint` and
+- **Breaking: `GetInstallationProgressAsync` called a route the server has never registered.** `AudioLabEndpoint` and
   `IAudioLabEndpoint` had a `GetInstallationProgressAsync` method posting to `"GetInstallationProgress"`, with an
   `AudioInstallationProgressResponse` contract shaped like a percent/step/package progress poll. Grepping the
   AudioLab server's actual `API.RegisterAPICall` calls (`AudioAPI/AudioLabAPI.cs`) turns up no such route at
