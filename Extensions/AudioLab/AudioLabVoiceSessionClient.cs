@@ -46,6 +46,7 @@ public sealed class AudioLabVoiceSessionClient : IAsyncDisposable
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
 
     private readonly CancellationTokenSource _pumpCancel = new();
+    private readonly TimeSpan _endHandshakeTimeout;
     private IClientWebSocket? _socket;
     private Task? _pumpTask;
     private int _connected;
@@ -61,14 +62,17 @@ public sealed class AudioLabVoiceSessionClient : IAsyncDisposable
     {
     }
 
-    /// <summary>Test seam: create with a custom socket factory.</summary>
-    internal AudioLabVoiceSessionClient(SwarmClientOptions options, ISessionManager sessionManager, IClientWebSocketFactory socketFactory, ILogger<AudioLabVoiceSessionClient>? logger = null)
+    /// <summary>Test seam: create with a custom socket factory and/or a shorter <see cref="EndAsync"/> wait
+    /// (<see cref="DefaultEndHandshakeTimeout"/> is deliberately generous for production use, too slow for a
+    /// test that wants to exercise the "server never answers" fallback without actually waiting that long).</summary>
+    internal AudioLabVoiceSessionClient(SwarmClientOptions options, ISessionManager sessionManager, IClientWebSocketFactory socketFactory, ILogger<AudioLabVoiceSessionClient>? logger = null, TimeSpan? endHandshakeTimeout = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
         _socketFactory = socketFactory ?? throw new ArgumentNullException(nameof(socketFactory));
         _connectPipeline = SwarmResiliencePipelines.BuildWebSocketConnectPipeline(options);
         _logger = logger ?? NullLogger<AudioLabVoiceSessionClient>.Instance;
+        _endHandshakeTimeout = endHandshakeTimeout ?? DefaultEndHandshakeTimeout;
         string baseUrl = options.NormalizedBaseUrl;
         if (baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
@@ -208,13 +212,32 @@ public sealed class AudioLabVoiceSessionClient : IAsyncDisposable
         }
     }
 
+    /// <summary>Default for how long <see cref="EndAsync"/> waits for the pump to observe the server's own Close
+    /// frame before giving up on a graceful finish and forcing the receive to abort instead. Generous on
+    /// purpose: the server's own teardown (ending the session, releasing its model lease) runs before it sends
+    /// Close, and that is not bounded by <see cref="SwarmClientOptions.WebSocketCloseTimeout"/>, which is sized
+    /// for a plain Close/Close-ack round trip instead.</summary>
+    internal static readonly TimeSpan DefaultEndHandshakeTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>Ends the call: sends <c>{"end":true}</c>, then completes the WebSocket close handshake.</summary>
     /// <remarks>LLMAssistant's own route (which a server-side <c>AudioLabVoiceSession</c> talks to on the
     /// caller's behalf) keeps one uncancelled background receive to detect a disconnect; completing this
     /// handshake rather than abandoning the connection is what lets its cleanup finish without logging what was
     /// actually a clean end as an error -- the same reasoning <c>RemoteTextService.CloseGracefullyAsync</c>
     /// documents server-side for that same route. Safe to call more than once, and safe to skip and go straight
-    /// to <see cref="DisposeAsync"/> -- that does the same thing for a caller that forgot.</remarks>
+    /// to <see cref="DisposeAsync"/> -- that does the same thing for a caller that forgot.
+    ///
+    /// <para>Deliberately does not reuse <see cref="WebSocketConnectionHelpers.GracefulCloseAsync"/> (unlike the
+    /// session-rejection retry path in <see cref="ConnectAsync"/>, where nothing else is reading from the socket
+    /// yet): that helper's own receive-for-the-peer's-close-reply loop would run concurrently with the pump's
+    /// receive loop, which is still live at this point, and two concurrent <see cref="IClientWebSocket.ReceiveAsync"/>
+    /// calls on one socket is a protocol violation most implementations reject outright. The pump is already
+    /// the thing reading this socket, so it is also the thing that should observe the server's Close -- sending
+    /// our own Close and then waiting for the pump to finish (bounded by <see cref="DefaultEndHandshakeTimeout"/>)
+    /// gets a real close handshake without a second concurrent reader. Cancelling the pump's receive to force it
+    /// to stop is the fallback for the server never answering, not the primary path: a real <c>ClientWebSocket</c>
+    /// aborts (not just cancels) a receive whose token fires, which would otherwise turn every ordinary end of
+    /// call into exactly the bare-abort <c>Dispose</c> this method exists to avoid.</para></remarks>
     public async Task EndAsync(CancellationToken cancellationToken = default)
     {
         if (Interlocked.Exchange(ref _ended, 1) != 0)
@@ -246,23 +269,43 @@ public sealed class AudioLabVoiceSessionClient : IAsyncDisposable
                 _logger.LogDebug(ex, "Sending the end frame failed (socket likely already closing)");
             }
         }
-        // The pump must be fully stopped -- not just asked to stop -- before the close handshake below issues
-        // its own ReceiveAsync: two concurrent receives on one socket is a protocol violation most
-        // implementations reject outright, and without a forced cancel here the pump's receive could otherwise
-        // block forever on a quiet call (nothing more arriving is the normal case, not a failure).
-        _pumpCancel.Cancel();
+        if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+        {
+            try
+            {
+                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Sending our half of the close handshake failed (connection likely already gone)");
+            }
+        }
         if (_pumpTask is not null)
         {
+            Task delay = Task.Delay(_endHandshakeTimeout, CancellationToken.None);
+            Task first = await Task.WhenAny(_pumpTask, delay).ConfigureAwait(false);
+            if (first == delay)
+            {
+                _logger.LogDebug("The server did not finish closing the connection within {Timeout}; forcing the receive to stop", _endHandshakeTimeout);
+                _pumpCancel.Cancel();
+            }
             try
             {
                 await _pumpTask.ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "The receive pump ended with an exception while EndAsync was stopping it (expected)");
+                _logger.LogDebug(ex, "The receive pump ended with an exception while EndAsync was waiting for it (expected)");
             }
         }
-        await WebSocketConnectionHelpers.GracefulCloseAsync(socket, _options.WebSocketCloseTimeout, _logger, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            socket.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Disposing the socket threw (ignored)");
+        }
     }
 
     /// <inheritdoc />

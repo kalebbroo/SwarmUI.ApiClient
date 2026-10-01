@@ -219,33 +219,39 @@ public class AudioLabVoiceSessionClientTests
     }
 
     [Fact]
-    public async Task EndAsync_SendsEndFrame_AndCompletesTheCloseHandshake_NeverABareDispose()
+    public async Task EndAsync_CompletesTheCloseHandshakeGracefully_WhenTheServerRepliesWithClose()
     {
+        // "end" makes the server's own handler return, so the framework sends Close back -- the pump (still the
+        // only thing reading this socket at this point, see EndAsync's own remarks on why it must stay that way)
+        // observes it and finishes on its own, no forced cancel needed. CloseFrame models that reply.
+        //
+        // Whether the end frame itself lands in SentMessages before the pump's own background receive reaches
+        // this scripted Close is a genuine, harmless race (nothing synchronizes "EndAsync's own State check"
+        // against "the pump processing its next scripted step"), and production code is correct either way: if
+        // the peer is already closing, skipping a now-pointless send is fine. EndAsync_ServerNeverReplies below
+        // is the deterministic place that proves the end frame is sent -- there the pump is genuinely blocked
+        // (HangStep) and cannot race ahead. This test's job is the other property: a graceful finish never ends
+        // up at the real-socket equivalent of Aborted, which cancelling the pump's receive would force.
         FakeClientWebSocket socket = new([
             new FakeClientWebSocket.TextFrame("""{"state":"Warming"}"""),
-            new FakeClientWebSocket.HangStep()
+            new FakeClientWebSocket.CloseFrame()
         ]);
         AudioLabVoiceSessionClient client = new(Options(), new FakeSessionManager(), new FakeClientWebSocketFactory(socket));
         await client.ConnectAsync(new VoiceSessionStartOptions { Model = "qwen3", InputRate = 16000 }).ConfigureAwait(false);
 
         await client.EndAsync().ConfigureAwait(false);
 
-        JObject lastSent = JObject.Parse(socket.SentMessages[^1]);
-        Assert.True(lastSent["end"]?.ToObject<bool>());
         Assert.True(socket.CloseOutputCalled);
         Assert.True(socket.Disposed);
+        Assert.NotEqual(WebSocketState.Aborted, socket.State);
     }
 
     [Fact]
-    public async Task DisposeAsync_WithoutEndAsyncFirst_StillCompletesTheCloseHandshake_NeverABareDispose()
+    public async Task DisposeAsync_WithoutEndAsyncFirst_StillCompletesTheCloseHandshake_WhenTheServerRepliesWithClose()
     {
-        // The HangStep after Warming simulates the ordinary, healthy case: nothing more has arrived because
-        // nobody has spoken yet. If DisposeAsync (or EndAsync) ever regressed to not cancelling the pump before
-        // the close handshake's own receive, this would deadlock instead of completing -- the test's own
-        // timeout is the backstop for that, same as it would be for a real stuck connection.
         FakeClientWebSocket socket = new([
             new FakeClientWebSocket.TextFrame("""{"state":"Warming"}"""),
-            new FakeClientWebSocket.HangStep()
+            new FakeClientWebSocket.CloseFrame()
         ]);
         AudioLabVoiceSessionClient client = new(Options(), new FakeSessionManager(), new FakeClientWebSocketFactory(socket));
         await client.ConnectAsync(new VoiceSessionStartOptions { Model = "qwen3", InputRate = 16000 }).ConfigureAwait(false);
@@ -254,6 +260,37 @@ public class AudioLabVoiceSessionClientTests
 
         Assert.True(socket.CloseOutputCalled);
         Assert.True(socket.Disposed);
+        Assert.NotEqual(WebSocketState.Aborted, socket.State);
+    }
+
+    [Fact]
+    public async Task EndAsync_ServerNeverReplies_StillCompletesInsteadOfHanging()
+    {
+        // HangStep after Warming: the server never sends anything more, including never answering "end" with
+        // its own Close -- the one case EndAsync's bounded wait, not the pump finishing on its own, has to
+        // handle. A short injected timeout (the test seam constructor) keeps this test fast; production uses
+        // AudioLabVoiceSessionClient.DefaultEndHandshakeTimeout (10s), sized for the server's own teardown
+        // rather than a test.
+        FakeClientWebSocket socket = new([
+            new FakeClientWebSocket.TextFrame("""{"state":"Warming"}"""),
+            new FakeClientWebSocket.HangStep()
+        ]);
+        AudioLabVoiceSessionClient client = new(Options(), new FakeSessionManager(), new FakeClientWebSocketFactory(socket), logger: null, endHandshakeTimeout: TimeSpan.FromMilliseconds(50));
+        await client.ConnectAsync(new VoiceSessionStartOptions { Model = "qwen3", InputRate = 16000 }).ConfigureAwait(false);
+
+        await client.EndAsync().ConfigureAwait(false);
+
+        // Deterministic, unlike the test above: the pump is genuinely blocked in HangStep the whole time, so it
+        // cannot race ahead and change State on its own -- this is the one scenario that actually proves the end
+        // frame gets sent while the socket is still Open.
+        JObject lastSent = JObject.Parse(socket.SentMessages[^1]);
+        Assert.True(lastSent["end"]?.ToObject<bool>());
+        Assert.True(socket.CloseOutputCalled);
+        Assert.True(socket.Disposed);
+        // Forcing the stuck receive to give up is accepted here -- it is the one case this fake's own remarks
+        // (see FakeClientWebSocket.HangStep) say really does abort a real socket, and there is no graceful
+        // alternative when the peer never answers at all.
+        Assert.Equal(WebSocketState.Aborted, socket.State);
     }
 
     private static byte[] EncodeOutboundFrame(int turnId, float[] samples)

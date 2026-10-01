@@ -189,7 +189,21 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
                     State = WebSocketState.Aborted;
                     throw t.Exception;
                 case HangStep:
-                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                    try
+                    {
+                        await Task.Delay(Timeout.Infinite, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Matches real ClientWebSocket: cancelling a pending ReceiveAsync aborts the connection
+                        // rather than gracefully stopping it -- there is no documented way to cancel a receive
+                        // and keep the socket usable. A caller relying on CloseOutputAsync still being legal
+                        // after cancelling a receive (eg via State is Open or CloseReceived) would see this
+                        // fail against a real socket even though an earlier, less faithful version of this fake
+                        // let it through.
+                        State = WebSocketState.Aborted;
+                        throw;
+                    }
                     throw new OperationCanceledException(cancellationToken);
                 case TextFrame text:
                     _pending = Encoding.UTF8.GetBytes(text.Json);
