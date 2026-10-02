@@ -1,0 +1,21 @@
+{
+  "batchsize": 1,
+  "cfgscale": 7.0,
+  "donotsave": true,
+  "googleaspectratio": "16:9",
+  "height": 1024,
+  "ideogramaspectratio": "1:1",
+  "imageformat": "PNG",
+  "images": 1,
+  "klingvideoduration": "5",
+  "model": "TestModel",
+  "outputformat": "png",
+  "prompt": "a cat",
+  "quality": "high",
+  "safetyfilterlevel": 2,
+  "sampler": "dpmpp_2m_sde",
+  "scheduler": "normal",
+  "steps": 20,
+  "veovideoaspectratio": "16:9",
+  "width": 1024
+}

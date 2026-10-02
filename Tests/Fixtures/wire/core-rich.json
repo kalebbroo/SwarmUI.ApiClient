@@ -1,0 +1,36 @@
+{
+  "batchsize": 1,
+  "cfgscale": 7.0,
+  "controlnetmodel": "canny.safetensors",
+  "controlnetstrength": 0.8,
+  "donotsave": true,
+  "height": 1024,
+  "imageformat": "PNG",
+  "images": 1,
+  "initimage": "data:image/png;base64,abc",
+  "initimagecreativity": 0.4,
+  "loras": [
+    "style, with comma",
+    "detail"
+  ],
+  "loraweights": [
+    "0.85",
+    "1.25"
+  ],
+  "model": "TestModel",
+  "negativeprompt": "blurry",
+  "presets": [
+    "myPreset"
+  ],
+  "prompt": "a cat",
+  "refinercontrolpercentage": 0.3,
+  "refinermodel": "refiner.safetensors",
+  "refinersteps": 10,
+  "sampler": "dpmpp_2m_sde",
+  "scheduler": "normal",
+  "seed": 123456,
+  "steps": 20,
+  "textvideoframes": 25,
+  "videofps": 24,
+  "width": 1024
+}

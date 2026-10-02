@@ -1,0 +1,19 @@
+{
+  "batchsize": 1,
+  "cfgscale": 7.0,
+  "donotsave": true,
+  "height": 1024,
+  "imageformat": "PNG",
+  "images": 1,
+  "llmassistantid": "jarvis",
+  "llmgeneratewildcardseed": false,
+  "llminstructions": "prompt",
+  "llmmodelid": "default",
+  "llmusecache": true,
+  "model": "TestModel",
+  "prompt": "a cat",
+  "sampler": "dpmpp_2m_sde",
+  "scheduler": "normal",
+  "steps": 20,
+  "width": 1024
+}
