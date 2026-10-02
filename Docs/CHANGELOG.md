@@ -3,8 +3,44 @@
 ## 0.13.0-beta
 
 Typed support for AudioLab's new real-time voice agent session (SwarmUI-AudioLab PR #34) and LLM Assistant's
-matching stateless turn endpoint, plus a fix for a client/server mismatch on an existing AudioLab endpoint that
-has never actually worked.
+matching stateless turn endpoint; a factory for reaching that voice session client from
+`client.Extensions.AudioLab`; and a breaking cleanup that moves every extension-registered `GenerationRequest`
+parameter off the core type and into its own extension's parameter group.
+
+### Breaking changes
+
+- **Extension-registered generation parameters no longer live on `GenerationRequest` itself.** Three server
+  extensions were contributing parameters straight onto the core type through a C# `partial class` (AudioLab,
+  SwarmUI-API-Backends, HartsyInference), and a fourth — five LLMAssistant parameters — had no partial file at
+  all and sat directly in `GenerationRequest.cs`. That put every extension's full parameter surface on
+  `GenerationRequest`'s own public API regardless of which extensions a given server or caller actually uses.
+  They now live on a typed params class per extension — `AudioLabGenerationParams`, `APIBackendsGenerationParams`,
+  `HartsyInferenceGenerationParams`, and the new `LLMAssistantGenerationParams` — attached through one slot,
+  `GenerationRequest.Extensions` (type `GenerationRequestExtensionParams`, one property per extension, each
+  defaulting to an empty instance rather than null). **The wire format is unchanged**: every property still
+  serializes under the exact same top-level JSON key as before, flattened into the same payload by
+  `GenerationEndpoint.CreateGenerationPayload` — only the C# shape moved, proven by byte-identical-JSON tests
+  against fixtures captured from the pre-move code. See the PR body for the full before/after member map.
+  - **Migration:** `request.Foo` for an extension-owned `Foo` becomes `request.Extensions.<Extension>.Foo` —
+    for example `request.AudioOutputFormat` becomes `request.Extensions.AudioLab.AudioOutputFormat`,
+    `request.SafetyTolerance` becomes `request.Extensions.APIBackends.SafetyTolerance`,
+    `request.CfgRescale` becomes `request.Extensions.HartsyInference.CfgRescale`, and
+    `request.LlmModelId` becomes `request.Extensions.LLMAssistant.LlmModelId`. Stock SwarmUI parameters such as
+    `request.Text2AudioStyle` or `request.InitImage` are unaffected. Each extension's own params type also moved
+    namespace, from `SwarmUI.ApiClient.Contracts.Requests` to `SwarmUI.ApiClient.Extensions.<Extension>.Contracts`.
+  - Also moved for the same reason, having landed on the core type by mistake rather than by design:
+    `FaceIDV2Weight` (`faceidvweight`) is HartsyInference-registered, not stock SwarmUI/ComfyUI like the
+    IP-Adapter parameters it sat beside — it now lives on `HartsyInferenceGenerationParams`.
+- **`GetInstallationProgressAsync` called a route the server has never registered.** `AudioLabEndpoint` and
+  `IAudioLabEndpoint` had a `GetInstallationProgressAsync` method posting to `"GetInstallationProgress"`, with an
+  `AudioInstallationProgressResponse` contract shaped like a percent/step/package progress poll. Grepping the
+  AudioLab server's actual `API.RegisterAPICall` calls (`AudioAPI/AudioLabAPI.cs`) turns up no such route at
+  all -- only `GetInstallationStatus`, whose response is `{success, engine_available, engine_ready, providers}`,
+  already correctly modeled by the existing `AudioInstallationStatusResponse` and already wired up as
+  `GetInstallationStatusAsync`. This was never a shape mismatch to reconcile: every call through
+  `GetInstallationProgressAsync` would have failed outright against a real server, 100% of the time. Removed the
+  method and its dead contract class; added a test pinning `GetInstallationStatusAsync`'s real request (no body)
+  and response shape, which had no test at all before this.
 
 ### Added
 
@@ -27,25 +63,38 @@ has never actually worked.
   reuses the existing `StreamFramesAsync` plumbing directly -- the close handshake it already performs in its own
   `finally` block needed nothing added for this route specifically (pinned by a new test that drives the real
   `SwarmWebSocketClient` over a scripted socket and asserts the close, not just the happy-path frames).
-
-### Fixed
-
-- **Breaking: `GetInstallationProgressAsync` called a route the server has never registered.** `AudioLabEndpoint` and
-  `IAudioLabEndpoint` had a `GetInstallationProgressAsync` method posting to `"GetInstallationProgress"`, with an
-  `AudioInstallationProgressResponse` contract shaped like a percent/step/package progress poll. Grepping the
-  AudioLab server's actual `API.RegisterAPICall` calls (`AudioAPI/AudioLabAPI.cs`) turns up no such route at
-  all -- only `GetInstallationStatus`, whose response is `{success, engine_available, engine_ready, providers}`,
-  already correctly modeled by the existing `AudioInstallationStatusResponse` and already wired up as
-  `GetInstallationStatusAsync`. This was never a shape mismatch to reconcile: every call through
-  `GetInstallationProgressAsync` would have failed outright against a real server, 100% of the time. Removed the
-  method and its dead contract class; added a test pinning `GetInstallationStatusAsync`'s real request (no body)
-  and response shape, which had no test at all before this.
+- **`IAudioLabEndpoint.CreateVoiceSession`**: a factory that reaches `AudioLabVoiceSessionClient` from
+  `client.Extensions.AudioLab.CreateVoiceSession()` instead of constructing it by hand. Required threading
+  `SwarmClientOptions` and `ISessionManager` through the composition root — `SwarmClient`'s two `SwarmExtensions`
+  construction sites, `SwarmExtensions` itself, down to `AudioLabEndpoint` — as new constructor overloads
+  alongside the existing ones, so direct construction of `AudioLabEndpoint`, `SwarmExtensions`, and
+  `AudioLabVoiceSessionClient` itself all keep working unchanged. An `AudioLabEndpoint` built through the old,
+  options-less constructor throws `InvalidOperationException` from `CreateVoiceSession` instead of failing some
+  other way. The created client's own `ConnectAsync(start, sessionKey, ...)` still takes its session key
+  per-call exactly as before — `CreateVoiceSession` does not implicitly bind it to whatever session key the
+  endpoint itself was scoped to (e.g. via `client.ForSession(...)`); pass it explicitly to `ConnectAsync` if that
+  matters for the caller.
+- **`AudioLabGenerationParams`, `APIBackendsGenerationParams`, `HartsyInferenceGenerationParams`,
+  `LLMAssistantGenerationParams`** and **`GenerationRequest.Extensions`** (`GenerationRequestExtensionParams`):
+  see Breaking changes above.
 
 ### Notes
 
 - `Tests/TestDoubles.cs`'s `FakeClientWebSocket` gained a `BinaryFrame` step (and tracks sent binary messages
   separately from text ones) for the new AudioLab voice session tests; existing text-only scripts and assertions
   are unaffected.
+- Parameters registered by SwarmUI's own built-in backend extensions — `ComfyUIBackendExtension`,
+  `DynamicThresholdingExtension`, `GridGeneratorExtension`, `AutoWebUIBackendExtension` under
+  `BuiltinExtensions/` in the SwarmUI source tree — stay on the core `GenerationRequest`. They ship inside the
+  main SwarmUI repository and are present on every install, unlike the separately-distributed `src/Extensions/*`
+  projects (AudioLab, API-Backends, HartsyInference, LLMAssistant, MagicPrompt) that `ISwarmExtensions` models;
+  there is no server-extension slot for a built-in to move into. This includes all three ControlNet units, whose
+  wire names (`controlnet[two/three]*`) are loop-registered with an interpolated name
+  (`$"ControlNet{suffix} ..."`) in `ComfyUIBackendExtension.cs` rather than a literal string — which is also why
+  an automated id-vs-registration diff initially missed them; they were hand-verified against the source instead.
+- Out of scope for this pass, noted for whoever next works on parameter coverage: AudioLab's server extension
+  registers 172 T2I parameters; `AudioLabGenerationParams` carries 73 of them (the gap predates this release).
+  `HartsyInferenceGenerationParams` carries 51 of the server's 53.
 
 ## 0.12.0-beta
 
