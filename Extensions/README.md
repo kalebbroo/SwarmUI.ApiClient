@@ -29,8 +29,8 @@ through this folder:
   prompt runs through `client.Generation` with an audio model selected. Those parameters live on
   `request.Extensions.AudioLab` (`AudioLabGenerationParams`, in `AudioLab/Contracts/AudioLabGenerationParams.cs`)
   and cover every music provider — ACE-Step, Stable Audio, AudioCraft, YuE2, YuE v1, HeartMuLa, MiniMax
-  Music 3 — plus the speech and transcription parameters shared across TTS and STT models. Per-provider
-  TTS/STT voice and tuning parameters are not covered yet. `Extensions/AudioLab` covers what the
+  Music 3 — plus every TTS/STT provider's own voice and tuning parameters (all 172 AudioLab registers
+  server-side are modeled). `Extensions/AudioLab` covers what the
   generation pipeline does not: direct synthesis and transcription, engine and model management, format
   conversion, time stretch, DAW project storage, and a real-time, phone-call-style voice agent session
   (`client.Extensions.AudioLab.CreateVoiceSession(...)` builds an `AudioLabVoiceSessionClient` -- note
