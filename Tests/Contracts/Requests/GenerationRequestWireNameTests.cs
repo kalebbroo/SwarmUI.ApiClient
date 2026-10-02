@@ -4,6 +4,10 @@ using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json;
 using SwarmUI.ApiClient.Contracts.Requests;
+using SwarmUI.ApiClient.Extensions.APIBackends.Contracts;
+using SwarmUI.ApiClient.Extensions.AudioLab.Contracts;
+using SwarmUI.ApiClient.Extensions.HartsyInference.Contracts;
+using SwarmUI.ApiClient.Extensions.LLMAssistant.Contracts;
 using Xunit;
 
 namespace SwarmUI.ApiClient.Tests.Contracts.Requests
@@ -11,6 +15,10 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
     /// <summary>Enforces the rule stated at the top of <see cref="GenerationRequest"/>: every wire name it sends is
     /// one SwarmUI actually registers. SwarmUI drops names it does not recognise without erroring, so a typo costs a
     /// silently ignored parameter rather than a failure, and only a diff against the server's own list catches it.</summary>
+    /// <remarks>Scans <see cref="GenerationRequest"/> itself plus every extension's own params type (everything
+    /// reachable through <see cref="GenerationRequest.Extensions"/>) -- the compiler no longer rejects two
+    /// properties on two different types claiming the same wire name the way one merged partial class did, so
+    /// <see cref="NoTwoPropertiesClaimTheSameWireName"/> is now the only thing that catches that.</remarks>
     public class GenerationRequestWireNameTests
     {
         /// <summary>Names that are deliberately absent from the parameter registry.</summary>
@@ -18,6 +26,17 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         /// that expands it into the parallel <c>loras</c> and <c>loraweights</c> arrays, and <c>presets</c> is a
         /// top-level field of the generation API rather than a registered parameter.</remarks>
         private static readonly HashSet<string> NotRegisteredParameters = new(StringComparer.Ordinal) { "presets" };
+
+        /// <summary><see cref="GenerationRequest"/> and every type reachable through <see cref="GenerationRequest.Extensions"/> --
+        /// together, the complete set of types a wire name can be declared on.</summary>
+        private static readonly Type[] RequestAndExtensionParamTypes =
+        [
+            typeof(GenerationRequest),
+            typeof(AudioLabGenerationParams),
+            typeof(APIBackendsGenerationParams),
+            typeof(HartsyInferenceGenerationParams),
+            typeof(LLMAssistantGenerationParams)
+        ];
 
         private static IReadOnlySet<string> LoadSnapshot()
         {
@@ -28,12 +47,15 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
 
         private static IEnumerable<(string WireName, string PropertyName)> WireNames()
         {
-            foreach (PropertyInfo property in typeof(GenerationRequest).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            foreach (Type type in RequestAndExtensionParamTypes)
             {
-                JsonPropertyAttribute? attribute = property.GetCustomAttribute<JsonPropertyAttribute>();
-                if (attribute?.PropertyName is not null)
+                foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 {
-                    yield return (attribute.PropertyName, property.Name);
+                    JsonPropertyAttribute? attribute = property.GetCustomAttribute<JsonPropertyAttribute>();
+                    if (attribute?.PropertyName is not null)
+                    {
+                        yield return (attribute.PropertyName, property.Name);
+                    }
                 }
             }
         }
@@ -65,6 +87,17 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
         {
             PropertyInfo loras = typeof(GenerationRequest).GetProperty(nameof(GenerationRequest.Loras))!;
             Assert.Null(loras.GetCustomAttribute<JsonPropertyAttribute>());
+        }
+
+        [Fact]
+        public void ExtensionsSlot_CarriesNoWireNameItself()
+        {
+            // Extensions is never a nested JSON object on the wire -- CreateGenerationPayload flattens its
+            // slots' own properties in instead -- so the slot property itself must stay [JsonIgnore], not
+            // [JsonProperty("extensions")] or similar.
+            PropertyInfo extensions = typeof(GenerationRequest).GetProperty(nameof(GenerationRequest.Extensions))!;
+            Assert.Null(extensions.GetCustomAttribute<JsonPropertyAttribute>());
+            Assert.NotNull(extensions.GetCustomAttribute<JsonIgnoreAttribute>());
         }
 
         [Fact]

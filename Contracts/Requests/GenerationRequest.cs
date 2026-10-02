@@ -1,13 +1,22 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using SwarmUI.ApiClient.Extensions;
 
 namespace SwarmUI.ApiClient.Contracts.Requests;
 
 /// <summary>Request parameters for text-to-image generation via SwarmUI.</summary>
-/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list. Extension-region parameters require the corresponding server extension to be installed.</remarks>
-public partial class GenerationRequest
+/// <remarks>Every property carries its exact SwarmUI wire name via <see cref="JsonPropertyAttribute"/> — the payload is serialized from these attributes, so a property without one does not reach the server. SwarmUI silently drops unrecognized parameter names (it normalizes incoming keys to lowercase letters before matching), which is why each name here was verified against the server's registered parameter list. Parameters registered by an optional SwarmUI server extension live on <see cref="Extensions"/> instead of directly on this type -- see <see cref="GenerationRequestExtensionParams"/>.</remarks>
+public class GenerationRequest
 {
+    /// <summary>Parameters registered by optional SwarmUI server extensions, grouped one slot per extension.</summary>
+    /// <remarks>Every slot defaults to an empty instance rather than null, so <c>request.Extensions.AudioLab.Foo = ...</c>
+    /// works immediately. Not serialized as a nested JSON object: <see cref="SwarmUI.ApiClient.Endpoints.Generation.GenerationEndpoint.CreateGenerationPayload"/>
+    /// flattens each set slot's own properties into this request's top-level payload, under the exact same wire
+    /// names an equivalent direct property on this type would use.</remarks>
+    [JsonIgnore]
+    public GenerationRequestExtensionParams Extensions { get; set; } = new();
+
     /// <summary>Number of images to generate for this request. Each image is an independent job with its own <c>batch_index</c>.</summary>
     /// <remarks>Server limit: 1–10000.</remarks>
     [JsonProperty("images")]
@@ -208,8 +217,8 @@ public partial class GenerationRequest
     #region Text To Audio
     /// <summary>How long the generated audio clip should be, in seconds ("Text2Audio Duration"). Server range 1–1000.</summary>
     /// <remarks>Read as a ceiling by some models — short lyrics give a short song — and as a target by others, which
-    /// may stretch to fit. AudioLab's backend reads this first and falls back to its own <see cref="MaxDuration"/>,
-    /// so a request that sets both is steered by this one.</remarks>
+    /// may stretch to fit. AudioLab's backend reads this first and falls back to its own
+    /// <c>Extensions.AudioLab.MaxDuration</c>, so a request that sets both is steered by this one.</remarks>
     [JsonProperty("textaudioduration")]
     public float? Text2AudioDuration { get; set; }
 
@@ -239,7 +248,7 @@ public partial class GenerationRequest
     public string? Text2AudioLanguage { get; set; }
 
     /// <summary>Container for the returned audio ("Audio Format"): mp3, wav, flac, ogg.</summary>
-    /// <remarks>Stock SwarmUI parameter. AudioLab registers its own <see cref="AudioOutputFormat"/> separately.</remarks>
+    /// <remarks>Stock SwarmUI parameter. AudioLab registers its own <c>Extensions.AudioLab.AudioOutputFormat</c> separately.</remarks>
     [JsonProperty("audioformat")]
     public string? AudioFormat { get; set; }
     #endregion
@@ -346,10 +355,8 @@ public partial class GenerationRequest
     [JsonProperty("ipadapterweighttype")]
     public string? IpAdapterWeightType { get; set; }
 
-    /// <summary>Strength of the FaceID-PlusV2 CLIP-face shortcut mix (the official pipeline's 's_scale'). ("FaceID V2 Weight").</summary>
-    /// <remarks>Higher = the CLIP appearance of the face crop contributes more on top of the ArcFace identity tokens. Only used with ip-adapter-faceid-plusv2 models; 1.0 is the official default. Server range 0–2. Server default: <c>1</c>. Gated behind the <c>ipadapter</c> feature flag. Does nothing unless <c>useipadapter</c> is set.</remarks>
-    [JsonProperty("faceidvweight")]
-    public float? FaceIDV2Weight { get; set; }
+    // FaceIDV2Weight ("faceidvweight") moved to Extensions.HartsyInference.FaceIDV2Weight -- registered only by
+    // the HartsyInference extension, not stock SwarmUI/ComfyUI like its neighbors above.
 
     #endregion
 
@@ -747,33 +754,9 @@ public partial class GenerationRequest
 
     #endregion
 
-    #region LLM Prompt Processing
-    /// <summary>Cache LLM responses for identical prompts. ("LLM Use Cache").</summary>
-    /// <remarks>Useful for batch generation. Server default: <c>true</c>.</remarks>
-    [JsonProperty("llmusecache")]
-    public bool? LlmUseCache { get; set; }
-
-    /// <summary>Generate a consistent wildcard seed per batch for reproducible results. ("LLM Generate Wildcard Seed").</summary>
-    /// <remarks>Server default: <c>false</c>.</remarks>
-    [JsonProperty("llmgeneratewildcardseed")]
-    public bool? LlmGenerateWildcardSeed { get; set; }
-
-    /// <summary>Which LLM model to use for prompt processing. ("LLM Model ID").</summary>
-    /// <remarks>Server default: <c>default</c>.</remarks>
-    [JsonProperty("llmmodelid")]
-    public string? LlmModelId { get; set; }
-
-    /// <summary>Which instruction set to use for prompt processing. ("LLM Instructions").</summary>
-    /// <remarks>Allowed values: <c>chat</c>, <c>vision</c>, <c>caption</c>, <c>prompt</c>, <c>randomprompt</c>, <c>instructiongen</c>, <c>companion</c>.</remarks>
-    [JsonProperty("llminstructions")]
-    public string? LlmInstructions { get; set; }
-
-    /// <summary>Which assistant's instructions (and per-model variants) to use for &lt;llmprompt&gt; processing. ("LLM Assistant ID").</summary>
-    /// <remarks>Default = active assistant. Allowed values: <c>default</c>, <c>jarvis</c>, <c>assistant-mu564gsu-pmesmbp</c>.</remarks>
-    [JsonProperty("llmassistantid")]
-    public string? LlmAssistantId { get; set; }
-
-    #endregion
+    // The LLM Prompt Processing group (LlmUseCache, LlmGenerateWildcardSeed, LlmModelId, LlmInstructions,
+    // LlmAssistantId) moved to Extensions.LLMAssistant -- registered by that extension's PromptTagHandler,
+    // not stock SwarmUI.
 
     #region Advanced Video
     /// <summary>Whether to boomerang (aka pingpong) the video. ("Video Boomerang").</summary>
