@@ -8,7 +8,7 @@ namespace SwarmUI.ApiClient.Extensions.HartsyInference.Contracts;
 /// / reference-edit inputs, and a handful of parameters that read like general-purpose SwarmUI/ComfyUI features
 /// but are, per the server source, registered only by this extension.</summary>
 /// <remarks>
-/// <para><b>Coverage: 51 of the 53 parameters HartsyInference registers server-side are modeled here.</b></para>
+/// <para><b>Coverage: 53 of the 53 parameters HartsyInference registers server-side are modeled here.</b></para>
 /// <para>Attached to a request via <see cref="SwarmUI.ApiClient.Extensions.GenerationRequestExtensionParams.HartsyInference"/>
 /// (<c>request.Extensions.HartsyInference</c>).</para>
 /// <para>These are distinct from the identically-shaped stock parameters elsewhere on
@@ -121,6 +121,27 @@ public class HartsyInferenceGenerationParams
     /// <remarks>Gated behind the <c>hartsyinference</c> and <c>hartsy_audio_ref</c> feature flags.</remarks>
     [JsonProperty("videoaudioreference")]
     public string? VideoAudioReference { get; set; }
+
+    #endregion
+
+    #region MiniMax-H3 Chaining (via HartsyInference)
+    /// <summary>MiniMax-H3: total length of the finished video, generated as back-to-back segments that each hold
+    /// the previous segment's tail fixed while denoising only their own new frames. ("H3 Chain Total Frames").</summary>
+    /// <remarks>Leave off (or at or below the normal frame count) for a single segment. Server range 0–4096.
+    /// Server default: <c>0</c>. Gated behind the <c>hartsyinference</c> and <c>hartsy_h3_chain</c> feature flags.</remarks>
+    [JsonProperty("hchaintotalframes")]
+    public int? H3ChainTotalFrames { get; set; }
+
+    /// <summary>MiniMax-H3: how many frames of the previous segment are carried into the next as fixed context,
+    /// which is what keeps the seams continuous. ("H3 Chain Context Frames").</summary>
+    /// <remarks>Snapped onto the chain's own grid (39, 90, 141, ...), the 17k+5 grid intersected with a whole
+    /// number of 40 Hz audio rows; the default is the engine's own reference value. Refused (not silently
+    /// adjusted) if the result leaves no room for new frames at the current frame count. Longer holds continuity
+    /// better and costs that many re-denoised frames per segment. Server range 39–498. Server default: <c>39</c>.
+    /// Gated behind the <c>hartsyinference</c> and <c>hartsy_h3_chain</c> feature flags. Does nothing unless
+    /// <c>hchaintotalframes</c> is set.</remarks>
+    [JsonProperty("hchaincontextframes")]
+    public int? H3ChainContextFrames { get; set; }
 
     #endregion
 

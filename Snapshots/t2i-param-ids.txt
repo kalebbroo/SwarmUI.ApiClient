@@ -2,7 +2,11 @@
 # Captured 2026-09-17 with the API-Backends, AudioLab and HartsyInference extensions loaded,
 # so extension-registered parameters are present and the drift test is not vacuous.
 # Refresh by re-running ListT2IParams and rewriting this file; lines starting with # are ignored.
-# 615 ids
+# hchaincontextframes and hchaintotalframes added 2026-10-02 without a live re-capture: no live server was
+# available, so they were confirmed directly against the registration call in SwarmUIHartsyInference.cs
+# (MiniMax-H3 chaining, added to that extension after the capture above) instead. Every other id here is
+# still the live 2026-09-17 capture, unchanged.
+# 617 ids
 aceguidance
 acelmmodel
 acesourceaudio
@@ -193,6 +197,8 @@ gridgenpromptreplace
 grokaspectratio
 grokoutputresolution
 guidancescale
+hchaincontextframes
+hchaintotalframes
 heartlibcfgscale
 heartliblyrics
 heartlibtemperature

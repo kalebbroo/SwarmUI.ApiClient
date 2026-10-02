@@ -138,6 +138,66 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
                 Assert.True(registered.Contains(id), $"Snapshot is missing '{id}', so it was captured without the extensions loaded and this suite would pass vacuously.");
             }
         }
+
+        /// <summary>Every wire id the AudioLab parameter-coverage pass added, cross-referenced by hand against
+        /// the server source (<c>AudioLabParams.cs</c> at commit 83edfcb) rather than taken from this library.</summary>
+        private static readonly string[] AudioLabCoverageAdditions =
+        [
+            "azureprofanityhandling", "azurespeakingstyle", "azurestyledegree", "barkvoice", "cartesiamodel", "cartesiaspeed",
+            "cartesiavoiceid", "cfgfiltertopk", "cfgweight", "clonelanguage", "cloneprompttext", "cosyvoicevoice",
+            "deepgrammodel", "deepgramvoice", "demucsoverlap", "demucssegment", "demucsshifts", "diacfgscale",
+            "diffusionsteps", "dolbyenhancepreset", "elevenlabssimilarityboost", "elevenlabsspeakerboost", "elevenlabsstability", "elevenlabsstyle",
+            "emotion", "enhancementstepsnfe", "exaggeration", "fcfg", "fishspeechchunklength", "fishspeechmaxtokens",
+            "fishspeechnormalize", "fmethod", "fswaysampling", "fxinput", "googlepitch", "googlespeakingrate",
+            "googlesttmodel", "googlevoicename", "indexrate", "kokorospeed", "kokorovoice", "kyutaittsvoice",
+            "lambdadenoiseblend", "melottsspeaker", "melottsspeed", "minp", "nfesteps", "openaiinstructions",
+            "openaispeed", "openaivoice", "orpheusvoice", "piperspeed", "pipervoice", "pitchshift",
+            "pitchvariation", "playhtquality", "playhtspeed", "playhtvoice", "playhtvoiceengine", "pocketttsvoice",
+            "pollyengine", "pollyvoice", "protect", "qweninstruct", "qwenlanguage", "qwenspeaker",
+            "qwenxvectoronly", "removebackgroundnoise", "repetitionpenalty", "rmsmixrate", "sentimentanalysis", "solver",
+            "sparkpitch", "sparkspeed", "sparkvoicegender", "speaker", "speakerlabels", "speakingrate",
+            "speed", "streamchunksize", "stylettsalphatimbre", "stylettsbetaprosody", "stylettsdiffusionsteps", "stylettsembeddingscale",
+            "taupriortemperature", "temperature", "texttemperature", "topk", "topp", "transcriptionprompt",
+            "vibevoicecfg", "volume", "waveformtemperature", "whisperbeamsize", "whisperinitialprompt", "zipvoicecfg",
+            "zipvoicespeed", "zipvoicesteps", "zonoslanguage"
+        ];
+
+        /// <summary>The two wire ids the HartsyInference parameter-coverage pass added (MiniMax-H3 chaining),
+        /// cross-referenced against <c>SwarmUIHartsyInference.cs</c> the same way.</summary>
+        private static readonly string[] HartsyInferenceCoverageAdditions = ["hchaincontextframes", "hchaintotalframes"];
+
+        [Fact]
+        public void AudioLabCoverageAdditions_AreAllCarried()
+        {
+            Assert.Equal(99, AudioLabCoverageAdditions.Length);
+            HashSet<string> carried = [.. WireNames().Select(entry => entry.WireName)];
+            List<string> absent = [.. AudioLabCoverageAdditions.Where(id => !carried.Contains(id))];
+            Assert.True(absent.Count == 0, "AudioLab coverage-completion ids missing from the payload: " + string.Join(", ", absent));
+        }
+
+        [Fact]
+        public void HartsyInferenceCoverageAdditions_AreAllCarried()
+        {
+            HashSet<string> carried = [.. WireNames().Select(entry => entry.WireName)];
+            List<string> absent = [.. HartsyInferenceCoverageAdditions.Where(id => !carried.Contains(id))];
+            Assert.True(absent.Count == 0, "HartsyInference coverage-completion ids missing from the payload: " + string.Join(", ", absent));
+        }
+
+        [Fact]
+        public void AudioLabGenerationParams_ModelsEveryServerRegisteredParameter()
+        {
+            int wireNameCount = typeof(AudioLabGenerationParams).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Count(p => p.GetCustomAttribute<JsonPropertyAttribute>()?.PropertyName is { Length: > 0 });
+            Assert.Equal(172, wireNameCount);
+        }
+
+        [Fact]
+        public void HartsyInferenceGenerationParams_ModelsEveryServerRegisteredParameter()
+        {
+            int wireNameCount = typeof(HartsyInferenceGenerationParams).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Count(p => p.GetCustomAttribute<JsonPropertyAttribute>()?.PropertyName is { Length: > 0 });
+            Assert.Equal(53, wireNameCount);
+        }
     }
 }
 

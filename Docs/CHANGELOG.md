@@ -1,5 +1,56 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.13.1-beta
+
+Completes the AudioLab and HartsyInference parameter coverage 0.13.0-beta's move disclosed as a pre-existing
+gap. Additive and non-breaking: every property from 0.13.0-beta keeps its exact wire name, type, and location.
+
+### Added
+
+- **99 AudioLab parameters**, closing its coverage from 73/172 to 172/172. Added to
+  `AudioLabGenerationParams` (`Extensions/AudioLab/Contracts/AudioLabGenerationParams.cs`), grouped into 33
+  new `#region`s matching the server's own `AudioLabParams.cs` region-per-provider layout exactly: the
+  shared TTS sampling knobs (`Volume`, `Temperature`, `TopP`, `TopK`, `MinP`, `RepetitionPenalty`,
+  `StreamChunkSize`), then one region per TTS/STT/clone/FX provider --
+  Bark, Chatterbox, Kokoro, Piper, Orpheus, CSM, VibeVoice, Dia, F5-TTS, ZipVoice, Zonos, Fish Speech,
+  Qwen3-TTS, MeloTTS, StyleTTS 2, Spark-TTS, CosyVoice, Pocket TTS, Kyutai TTS, Whisper, AssemblyAI,
+  ElevenLabs, Azure, Deepgram, Google, OpenAI, Cartesia, PlayHT, Dolby, Amazon Polly, RVC, GPT-SoVITS, and
+  Resemble Enhance. Every wire id, type, and default was read from the registration call itself in the
+  server source (`SwarmUI-AudioLab` at commit `83edfcb`), not guessed from the display name; a handful of
+  C# property names were given a provider prefix the server's own field name lacks (e.g. `Speaker` ->
+  `CsmSpeaker`, `Speed` -> `F5Speed`) to stay unambiguous in one flat class -- the `[JsonProperty]` wire id is
+  what reaches the server either way and is unchanged from the registration.
+- **2 HartsyInference parameters**, closing its coverage from 51/53 to 53/53: `H3ChainTotalFrames`
+  (`hchaintotalframes`) and `H3ChainContextFrames` (`hchaincontextframes`), MiniMax-H3's long-form chaining
+  controls, added to a new `#region MiniMax-H3 Chaining` in `HartsyInferenceGenerationParams`.
+- **`GenerationRequestWireNameTests.AudioLabCoverageAdditions_AreAllCarried`,
+  `HartsyInferenceCoverageAdditions_AreAllCarried`,
+  `AudioLabGenerationParams_ModelsEveryServerRegisteredParameter`, and
+  `HartsyInferenceGenerationParams_ModelsEveryServerRegisteredParameter`**: the first two assert every id
+  this release adds is carried to the wire; the latter two pin the exact modeled-parameter count (172, 53) so
+  a future accidental removal or duplicate fails loudly. The pre-existing reflection-based tests
+  (`EveryWireName_IsRegisteredOnTheServer`, `NoTwoPropertiesClaimTheSameWireName`,
+  `CreateGenerationPayload_EveryPropertyReachesTheWire`) needed no changes to cover the new properties --
+  they already walk every property on these types.
+
+### Fixed
+
+- **`Snapshots/t2i-param-ids.txt` was missing `hchaincontextframes`/`hchaintotalframes`.** The snapshot's own
+  `EveryWireName_IsRegisteredOnTheServer` test caught it immediately: MiniMax-H3 chaining was added to the
+  HartsyInference server extension after this snapshot's 2026-09-17 live capture, so those two ids were
+  genuinely absent from it even though the server registers them today. No live server was available to
+  redo the capture; added both ids by hand, confirmed directly against the registration call in
+  `SwarmUIHartsyInference.cs` rather than assumed. Every other id in the snapshot is still the unmodified
+  2026-09-17 capture.
+
+### Notes
+
+- `Tests/Fixtures/wire/exhaustive-every-property.json` is regenerated to include the 101 new properties.
+  The other seven fixtures are unaffected (each sets only specific, already-covered properties) and are
+  unchanged byte-for-byte.
+- `AudioLabGenerationParams`'s and `HartsyInferenceGenerationParams`'s coverage notes (XML doc remarks) are
+  updated to 172/172 and 53/53.
+
 ## 0.13.0-beta
 
 Typed support for AudioLab's new real-time voice agent session (SwarmUI-AudioLab PR #34) and LLM Assistant's
