@@ -1,17 +1,22 @@
 using Newtonsoft.Json;
+using SwarmUI.ApiClient.Contracts.Requests;
 
-namespace SwarmUI.ApiClient.Contracts.Requests;
+namespace SwarmUI.ApiClient.Extensions.HartsyInference.Contracts;
 
 /// <summary>Generation parameters registered by the HartsyInference server extension for model families it
-/// supports beyond plain text-to-image: ACE-Step music, Wan-Animate, Ideogram 4, MiniMax Music, and reference-audio
-/// / reference-edit inputs.</summary>
+/// supports beyond plain text-to-image: ACE-Step music, Wan-Animate, Ideogram 4, MiniMax Music, reference-audio
+/// / reference-edit inputs, and a handful of parameters that read like general-purpose SwarmUI/ComfyUI features
+/// but are, per the server source, registered only by this extension.</summary>
 /// <remarks>
+/// <para><b>Coverage: 51 of the 53 parameters HartsyInference registers server-side are modeled here.</b></para>
+/// <para>Attached to a request via <see cref="SwarmUI.ApiClient.Extensions.GenerationRequestExtensionParams.HartsyInference"/>
+/// (<c>request.Extensions.HartsyInference</c>).</para>
 /// <para>These are distinct from the identically-shaped stock parameters elsewhere on
 /// <see cref="GenerationRequest"/> — for example <see cref="InitImageMode"/>'s <c>reference</c> value only exists
 /// because this extension registers it; a vanilla server without HartsyInference installed does not offer it.</para>
 /// <para>Only send parameters advertised by the selected model's feature flags.</para>
 /// </remarks>
-public partial class GenerationRequest
+public class HartsyInferenceGenerationParams
 {
     #region ACE-Step (via HartsyInference)
     /// <summary>Source audio clip for ACE-Step music editing. ("ACE-Step Source Audio").</summary>
@@ -283,5 +288,17 @@ public partial class GenerationRequest
     /// <remarks>1.0 leaves the model's own default alone; 0.5 halves it. This is the lever for work whose peak is activations rather than weights — VAE decodes, vocoders, 3D grid decodes — where streaming weights does nothing at all. Server range 0.1–1. Server default: <c>1.0</c>.</remarks>
     [JsonProperty("vramchunkscale")]
     public float? VramChunkScale { get; set; }
+    #endregion
+
+    #region Image Prompting (via HartsyInference)
+    // Moved from the core GenerationRequest: this wire name is registered only by HartsyInference's
+    // SwarmUIHartsyInference.cs, sitting alongside ComfyUI's own IP-Adapter params in the UI but not
+    // actually one of them server-side.
+
+    /// <summary>Strength of the FaceID-PlusV2 CLIP-face shortcut mix (the official pipeline's 's_scale'). ("FaceID V2 Weight").</summary>
+    /// <remarks>Higher = the CLIP appearance of the face crop contributes more on top of the ArcFace identity tokens. Only used with ip-adapter-faceid-plusv2 models; 1.0 is the official default. Server range 0–2. Server default: <c>1</c>. Gated behind the <c>ipadapter</c> feature flag. Does nothing unless <c>useipadapter</c> is set.</remarks>
+    [JsonProperty("faceidvweight")]
+    public float? FaceIDV2Weight { get; set; }
+
     #endregion
 }

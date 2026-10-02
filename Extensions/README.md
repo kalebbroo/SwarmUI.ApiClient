@@ -27,13 +27,16 @@ through this folder:
 
 - **AudioLab** registers audio T2I parameters and an audio backend type, so generating audio from a
   prompt runs through `client.Generation` with an audio model selected. Those parameters live on
-  `GenerationRequest` (partial class, `AudioLab/Contracts/GenerationRequest.AudioLab.cs`) and cover every
-  music provider — ACE-Step, Stable Audio, AudioCraft, YuE2, YuE v1, HeartMuLa, MiniMax Music 3 — plus the
-  speech and transcription parameters shared across TTS and STT models. Per-provider TTS/STT voice and
-  tuning parameters are not covered yet. `Extensions/AudioLab` covers what the generation pipeline does not:
-  direct synthesis and transcription, engine and model management, format conversion, time stretch, DAW
-  project storage, and (`AudioLabVoiceSessionClient`, constructed directly rather than through
-  `client.Extensions.AudioLab`) a real-time, phone-call-style voice agent session.
+  `request.Extensions.AudioLab` (`AudioLabGenerationParams`, in `AudioLab/Contracts/AudioLabGenerationParams.cs`)
+  and cover every music provider — ACE-Step, Stable Audio, AudioCraft, YuE2, YuE v1, HeartMuLa, MiniMax
+  Music 3 — plus the speech and transcription parameters shared across TTS and STT models. Per-provider
+  TTS/STT voice and tuning parameters are not covered yet. `Extensions/AudioLab` covers what the
+  generation pipeline does not: direct synthesis and transcription, engine and model management, format
+  conversion, time stretch, DAW project storage, and a real-time, phone-call-style voice agent session
+  (`client.Extensions.AudioLab.CreateVoiceSession(...)` builds an `AudioLabVoiceSessionClient` -- note
+  the returned client's session key is chosen per-call through its own `ConnectAsync`, not inherited
+  from whatever session this endpoint was scoped to; direct construction of `AudioLabVoiceSessionClient`
+  still works for a caller without a full `ISwarmClient`).
 - **API Backends** and **HartsyInference Backend** both register generation parameters and a backend type into
   stock SwarmUI, so generating through them runs on `client.Generation`. Their own endpoints answer the question
   a request cannot: what a given model will actually accept. `APIBackendsListModelCapabilities` reports each API

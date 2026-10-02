@@ -98,7 +98,7 @@ public class SwarmClient : ISwarmClient
         Presets = new PresetsEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<PresetsEndpoint>());
         User = new UserEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<UserEndpoint>());
         Admin = new AdminEndpoint(_swarmHttpClient, SwarmSessionKeys.Default, loggerFactory?.CreateLogger<AdminEndpoint>());
-        Extensions = new SwarmExtensions(_swarmHttpClient, _webSocketClient, SwarmSessionKeys.Default, loggerFactory);
+        Extensions = new SwarmExtensions(_swarmHttpClient, _webSocketClient, SwarmSessionKeys.Default, _options, _sessionManager, loggerFactory);
         _logger.LogInformation("SwarmClient initialized for {BaseUrl}", options.NormalizedBaseUrl);
     }
 
@@ -229,7 +229,7 @@ public class SwarmClient : ISwarmClient
             Presets = new PresetsEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<PresetsEndpoint>());
             User = new UserEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<UserEndpoint>());
             Admin = new AdminEndpoint(root._swarmHttpClient, sessionKey, root._loggerFactory?.CreateLogger<AdminEndpoint>());
-            Extensions = new SwarmExtensions(root._swarmHttpClient, root._webSocketClient, sessionKey, root._loggerFactory);
+            Extensions = new SwarmExtensions(root._swarmHttpClient, root._webSocketClient, sessionKey, root._options, root._sessionManager, root._loggerFactory);
         }
 
         public ISwarmClient ForSession(string sessionKey) => _root.ForSession(sessionKey);

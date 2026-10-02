@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using SwarmUI.ApiClient.Extensions.AudioLab.Contracts;
+using SwarmUI.ApiClient.Sessions;
 
 namespace SwarmUI.ApiClient.Extensions.AudioLab;
 
@@ -131,4 +133,16 @@ public interface IAudioLabEndpoint : ISwarmExtensionEndpoint
     /// <returns>The deleted project name.</returns>
     /// <remarks>Calls the <c>AudioLabDeleteProject</c> endpoint.</remarks>
     Task<DawProjectDeleteResponse> DeleteProjectAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates a new, not-yet-connected <see cref="AudioLabVoiceSessionClient"/> for AudioLab's
+    /// real-time voice agent session.</summary>
+    /// <param name="logger">Optional logger for the created client.</param>
+    /// <returns>A new <see cref="AudioLabVoiceSessionClient"/>. Call <see cref="AudioLabVoiceSessionClient.ConnectAsync"/> next.</returns>
+    /// <remarks>Needs the <see cref="SwarmClientOptions"/>/<see cref="ISessionManager"/> this endpoint was built
+    /// with -- every endpoint reached through <see cref="ISwarmClient.Extensions"/> has them. Unlike every other
+    /// method on this interface, the returned client's session key is chosen per-call through its own
+    /// <see cref="AudioLabVoiceSessionClient.ConnectAsync"/>, not through the session this endpoint itself is
+    /// scoped to -- pass it explicitly there if that matters for the caller.</remarks>
+    /// <exception cref="System.InvalidOperationException">This endpoint was constructed without <see cref="SwarmClientOptions"/>/<see cref="ISessionManager"/> (ie built through <see cref="AudioLabEndpoint"/>'s options-less constructor).</exception>
+    AudioLabVoiceSessionClient CreateVoiceSession(ILogger<AudioLabVoiceSessionClient>? logger = null);
 }

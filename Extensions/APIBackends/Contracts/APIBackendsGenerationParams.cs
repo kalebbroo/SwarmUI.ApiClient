@@ -1,21 +1,22 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace SwarmUI.ApiClient.Contracts.Requests;
+namespace SwarmUI.ApiClient.Extensions.APIBackends.Contracts;
 
 /// <summary>Generation parameters registered by the SwarmUI-API-Backends server extension, covering every remote
 /// provider it fronts: Black Forest Labs, OpenAI, Ideogram, Google, Grok directly, plus a couple dozen more
 /// through its fal.ai integration.</summary>
 /// <remarks>
-/// <para>These are extension parameters, not stock SwarmUI ones — they only apply when a request targets a model
-/// served by one of these API backends, and only reach the server at all when SwarmUI-API-Backends is installed.
-/// The fal.ai integration alone fronts Kling, Luma, Veo, Pika, Sora, Wan, Seedance, Hunyuan, Vidu, PixVerse,
-/// Kandinsky, Recraft, Nano Banana 2, and more behind one API key. Each provider only reads its own parameters —
-/// sending Kling's duration to a Luma generation does nothing, since SwarmUI only forwards the parameters the
-/// selected model's feature flags advertise.</para>
+/// <para>Attached to a request via <see cref="SwarmUI.ApiClient.Extensions.GenerationRequestExtensionParams.APIBackends"/>
+/// (<c>request.Extensions.APIBackends</c>). These are extension parameters, not stock SwarmUI ones — they only
+/// apply when a request targets a model served by one of these API backends, and only reach the server at all
+/// when SwarmUI-API-Backends is installed. The fal.ai integration alone fronts Kling, Luma, Veo, Pika, Sora, Wan,
+/// Seedance, Hunyuan, Vidu, PixVerse, Kandinsky, Recraft, Nano Banana 2, and more behind one API key. Each
+/// provider only reads its own parameters — sending Kling's duration to a Luma generation does nothing, since
+/// SwarmUI only forwards the parameters the selected model's feature flags advertise.</para>
 /// <para>Only send parameters advertised by the selected model's feature flags.</para>
 /// </remarks>
-public partial class GenerationRequest
+public class APIBackendsGenerationParams
 {
     #region Black Forest Labs (Flux via API)
     // These parameters require the SwarmUI-API-Backends server extension.

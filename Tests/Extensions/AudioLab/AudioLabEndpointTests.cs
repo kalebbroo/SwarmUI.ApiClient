@@ -284,5 +284,33 @@ namespace SwarmUI.ApiClient.Tests.Extensions.AudioLab
             Assert.DoesNotContain("GetInstallationProgress", endpoint.Extension.Endpoints);
             Assert.False(string.IsNullOrWhiteSpace(endpoint.Extension.RepositoryUrl));
         }
+
+        #region CreateVoiceSession
+
+        [Fact]
+        public void CreateVoiceSession_BuiltThroughOptionsLessConstructor_Throws()
+        {
+            AudioLabEndpoint endpoint = CreateEndpoint(new RecordingExtensionHttpClient(), new RecordingExtensionWebSocketClient());
+
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => endpoint.CreateVoiceSession());
+            Assert.Contains("SwarmClientOptions", ex.Message);
+        }
+
+        [Fact]
+        public void CreateVoiceSession_BuiltThroughOptionsConstructor_ReturnsAClient()
+        {
+            AudioLabEndpoint endpoint = new(
+                new RecordingExtensionHttpClient(),
+                new RecordingExtensionWebSocketClient(),
+                SwarmUI.ApiClient.Sessions.SwarmSessionKeys.Default,
+                new SwarmClientOptions { BaseUrl = "http://localhost:7801" },
+                new FakeSessionManager());
+
+            AudioLabVoiceSessionClient client = endpoint.CreateVoiceSession();
+
+            Assert.NotNull(client);
+        }
+
+        #endregion
     }
 }

@@ -30,30 +30,43 @@ public class GenerationEndpointTests
 
     #region Payload round-trip
 
-    /// <summary>Every serializable GenerationRequest property must reach the payload under its exact wire name when set. This test makes the "silently dropped parameter" bug class impossible to reintroduce.</summary>
+    /// <summary>Every serializable property -- on GenerationRequest itself and on every type reachable through
+    /// <see cref="GenerationRequest.Extensions"/> -- must reach the payload under its exact wire name when set.
+    /// This test makes the "silently dropped parameter" bug class impossible to reintroduce, across the whole
+    /// composed shape, not just the core type.</summary>
     [Fact]
     public void CreateGenerationPayload_EveryPropertyReachesTheWire()
     {
         GenerationRequest request = new() { Prompt = "p" };
         List<(PropertyInfo Property, string WireName)> serializable = [];
-        foreach (PropertyInfo property in typeof(GenerationRequest).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+
+        void CollectAndFill(object target)
         {
-            if (property.GetCustomAttribute<JsonIgnoreAttribute>() is not null)
+            foreach (PropertyInfo property in target.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
-                continue;
+                if (property.GetCustomAttribute<JsonIgnoreAttribute>() is not null)
+                {
+                    continue;
+                }
+                JsonPropertyAttribute? attribute = property.GetCustomAttribute<JsonPropertyAttribute>();
+                Assert.True(attribute is { PropertyName.Length: > 0 }, $"Property {target.GetType().Name}.{property.Name} has neither [JsonProperty] with a wire name nor [JsonIgnore] — it would silently use the C# name and likely be dropped by the server.");
+                serializable.Add((property, attribute!.PropertyName!));
+                property.SetValue(target, SampleValue(property.PropertyType));
             }
-            JsonPropertyAttribute? attribute = property.GetCustomAttribute<JsonPropertyAttribute>();
-            Assert.True(attribute is { PropertyName.Length: > 0 }, $"Property {property.Name} has neither [JsonProperty] with a wire name nor [JsonIgnore] — it would silently use the C# name and likely be dropped by the server.");
-            serializable.Add((property, attribute!.PropertyName!));
-            property.SetValue(request, SampleValue(property.PropertyType));
         }
+
+        CollectAndFill(request);
+        CollectAndFill(request.Extensions.AudioLab);
+        CollectAndFill(request.Extensions.APIBackends);
+        CollectAndFill(request.Extensions.HartsyInference);
+        CollectAndFill(request.Extensions.LLMAssistant);
         // InitImageCreativity requires InitImage; Seed's sample must not be the omitted sentinel.
         request.InitImage = "data:image/png;base64,abc";
         request.Seed = 42;
         JObject payload = GenerationEndpoint.CreateGenerationPayload(request);
         foreach ((PropertyInfo property, string wireName) in serializable)
         {
-            Assert.True(payload.ContainsKey(wireName), $"Property {property.Name} (wire name '{wireName}') did not reach the payload.");
+            Assert.True(payload.ContainsKey(wireName), $"Property {property.DeclaringType!.Name}.{property.Name} (wire name '{wireName}') did not reach the payload.");
         }
     }
 

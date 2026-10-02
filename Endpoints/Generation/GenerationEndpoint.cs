@@ -50,7 +50,7 @@ public class GenerationEndpoint : IGenerationEndpoint
     {
         // Validate eagerly so failures throw at the call site, not at first enumeration.
         ArgumentNullException.ThrowIfNull(request);
-        bool hasAudioInput = !string.IsNullOrWhiteSpace(request.AudioInput) || !string.IsNullOrWhiteSpace(request.SourceAudio);
+        bool hasAudioInput = !string.IsNullOrWhiteSpace(request.Extensions?.AudioLab?.AudioInput) || !string.IsNullOrWhiteSpace(request.Extensions?.AudioLab?.SourceAudio);
         if (string.IsNullOrWhiteSpace(request.Prompt) && !hasAudioInput)
         {
             throw new ArgumentException("Generation needs a prompt, or an audio input for models that transcribe or convert audio", nameof(request));
@@ -255,11 +255,30 @@ public class GenerationEndpoint : IGenerationEndpoint
         JObject _ = await _httpClient.PostJsonAsync<JObject>("ServerDebugMessage", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Builds the GenerateText2ImageWS payload from the request's [JsonProperty] wire names, then applies the LoRA post-pass.</summary>
+    /// <summary>Builds the GenerateText2ImageWS payload from the request's [JsonProperty] wire names, flattens in
+    /// every set <see cref="GenerationRequest.Extensions"/> slot, then applies the LoRA post-pass.</summary>
     /// <remarks>LoRAs are sent as parallel JSON arrays (never comma-joined — LoRA names may legally contain commas) with full-precision weights. Internal so payload round-trip tests can verify every property reaches the wire.</remarks>
     internal static JObject CreateGenerationPayload(GenerationRequest request)
     {
         JObject payload = JObject.FromObject(request, PayloadSerializer);
+        // Each extension's own params type serializes under the exact same [JsonProperty] wire names a direct
+        // GenerationRequest property would use -- merging their properties in here is what keeps the wire format
+        // flat (and therefore unchanged) even though the C# shape is now composed rather than one big partial class.
+        foreach (object extensionParams in request.Extensions?.EnumerateParams() ?? [])
+        {
+            JObject extensionPayload = JObject.FromObject(extensionParams, PayloadSerializer);
+            foreach (JProperty property in extensionPayload.Properties())
+            {
+                if (payload.ContainsKey(property.Name))
+                {
+                    throw new InvalidOperationException(
+                        $"Two parameter groups both claim the wire name '{property.Name}' -- one on GenerationRequest " +
+                        $"(or an earlier Extensions slot) and one on {extensionParams.GetType().Name}. This is a library " +
+                        "bug; see GenerationRequestWireNameTests.NoTwoPropertiesClaimTheSameWireName.");
+                }
+                payload.Add(property.Name, property.Value);
+            }
+        }
         if (request.Loras is { Count: > 0 })
         {
             List<string> loraNames = [];

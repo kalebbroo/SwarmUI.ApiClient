@@ -1,0 +1,21 @@
+{
+  "acestepsourceaudio": "data:audio/wav;base64,abc",
+  "animatereferenceimage": "data:image/png;base64,abc",
+  "batchsize": 1,
+  "cfgrescale": 0.7,
+  "cfgscale": 7.0,
+  "donotsave": true,
+  "faceidvweight": 1.0,
+  "height": 1024,
+  "imageformat": "PNG",
+  "images": 1,
+  "initimagemode": "reference",
+  "model": "TestModel",
+  "prompt": "a cat",
+  "restoremodel": "seedvr2-3b",
+  "sampler": "dpmpp_2m_sde",
+  "scheduler": "normal",
+  "steps": 20,
+  "vrammode": "Balanced",
+  "width": 1024
+}

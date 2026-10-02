@@ -1,9 +1,18 @@
 using Newtonsoft.Json;
+using SwarmUI.ApiClient.Contracts.Requests;
 
-namespace SwarmUI.ApiClient.Contracts.Requests;
+namespace SwarmUI.ApiClient.Extensions.AudioLab.Contracts;
 
 /// <summary>Generation parameters registered by the AudioLab server extension.</summary>
 /// <remarks>
+/// <para><b>Coverage: 73 of the 172 parameters AudioLab registers server-side are modeled here</b> (a
+/// pre-existing gap, not introduced by moving these off <see cref="GenerationRequest"/>). Covered: every music
+/// provider's core knobs and the parameters shared across TTS/STT models. Not yet covered: per-provider TTS/STT
+/// voice and tuning parameters.</para>
+/// <para>Attached to a request via <see cref="GenerationRequestExtensionParams.AudioLab"/>
+/// (<c>request.Extensions.AudioLab</c>). Every property here still serializes under its own top-level wire name,
+/// flattened into the same generation payload as every core parameter -- this type exists to keep AudioLab's
+/// parameters off <see cref="GenerationRequest"/> itself, not to change the wire format.</para>
 /// <para><b>ACE-Step, YuE2 and MiniMax Music 3 read lyrics from <see cref="GenerationRequest.Prompt"/> and genre
 /// from <see cref="GenerationRequest.Text2AudioStyle"/>.</b> AudioLab dropped its own lyrics parameters for those
 /// three on 2026-09-16 to match core and the engine, which have always read it that way. YuE v1 and HeartMuLa keep
@@ -16,7 +25,7 @@ namespace SwarmUI.ApiClient.Contracts.Requests;
 /// <c>song*</c> for the pass that renders audio and <c>score*</c> for the pass that plans an ABC score, rather than
 /// carrying a YuE2 prefix, because SwarmUI strips digits from parameter ids and the prefix would collide with YuE v1.</para>
 /// </remarks>
-public partial class GenerationRequest
+public class AudioLabGenerationParams
 {
     /// <summary>Container for the returned audio ("Audio Output Format"): wav_16, wav_32, flac, mp3, ogg.</summary>
     [JsonProperty("audiooutputformat")]
