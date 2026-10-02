@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Newtonsoft.Json.Linq;
 using SwarmUI.ApiClient.Extensions.AudioLab.Contracts;
 using SwarmUI.ApiClient.Http;
+using SwarmUI.ApiClient.Sessions;
 using SwarmUI.ApiClient.WebSockets;
 
 namespace SwarmUI.ApiClient.Extensions.AudioLab;
@@ -49,6 +50,9 @@ public class AudioLabEndpoint : IAudioLabEndpoint
     private readonly ISwarmWebSocketClient _webSocketClient;
     private readonly string _sessionKey;
     private readonly ILogger<AudioLabEndpoint> _logger;
+    private readonly SwarmClientOptions? _options;
+    private readonly ISessionManager? _sessionManager;
+    private readonly ILoggerFactory? _loggerFactory;
 
     /// <inheritdoc />
     public SwarmExtensionInfo Extension => ExtensionInfo;
@@ -58,12 +62,30 @@ public class AudioLabEndpoint : IAudioLabEndpoint
     /// <param name="webSocketClient">WebSocket client for streaming install operations.</param>
     /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
     /// <param name="logger">Optional logger.</param>
+    /// <remarks>An endpoint built through this constructor has no <see cref="SwarmClientOptions"/>/
+    /// <see cref="ISessionManager"/>, so <see cref="CreateVoiceSession"/> throws <see cref="InvalidOperationException"/>
+    /// on it; use the other constructor (what <see cref="SwarmClient"/>/<see cref="SwarmExtensions"/> use) for that.</remarks>
     public AudioLabEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, string sessionKey, ILogger<AudioLabEndpoint>? logger = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _webSocketClient = webSocketClient ?? throw new ArgumentNullException(nameof(webSocketClient));
         _sessionKey = sessionKey ?? throw new ArgumentNullException(nameof(sessionKey));
         _logger = logger ?? NullLogger<AudioLabEndpoint>.Instance;
+    }
+
+    /// <summary>Creates a new AudioLabEndpoint that can also build <see cref="AudioLabVoiceSessionClient"/>s via <see cref="CreateVoiceSession"/>.</summary>
+    /// <param name="httpClient">HTTP client for API requests.</param>
+    /// <param name="webSocketClient">WebSocket client for streaming install operations.</param>
+    /// <param name="sessionKey">The pooled session key all calls from this endpoint instance authenticate with.</param>
+    /// <param name="options">Client configuration options, threaded through to every <see cref="AudioLabVoiceSessionClient"/> <see cref="CreateVoiceSession"/> builds.</param>
+    /// <param name="sessionManager">Session pool, threaded through the same way.</param>
+    /// <param name="loggerFactory">Optional logger factory; used for this endpoint's own logger and for each created voice session client's logger.</param>
+    public AudioLabEndpoint(ISwarmHttpClient httpClient, ISwarmWebSocketClient webSocketClient, string sessionKey, SwarmClientOptions options, ISessionManager sessionManager, ILoggerFactory? loggerFactory = null)
+        : this(httpClient, webSocketClient, sessionKey, loggerFactory?.CreateLogger<AudioLabEndpoint>())
+    {
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
+        _loggerFactory = loggerFactory;
     }
 
     /// <inheritdoc />
@@ -326,6 +348,19 @@ public class AudioLabEndpoint : IAudioLabEndpoint
         DawProjectDeleteResponse response = await _httpClient.PostJsonAsync<DawProjectDeleteResponse>("AudioLabDeleteProject", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         LogOutcome(response, "DAW project delete");
         return response;
+    }
+
+    /// <inheritdoc />
+    public AudioLabVoiceSessionClient CreateVoiceSession(ILogger<AudioLabVoiceSessionClient>? logger = null)
+    {
+        if (_options is null || _sessionManager is null)
+        {
+            throw new InvalidOperationException(
+                "This AudioLabEndpoint was constructed without SwarmClientOptions/ISessionManager, so it cannot create a voice session. " +
+                "Use the AudioLabEndpoint constructor overload that accepts them (the one SwarmClient/SwarmExtensions use), " +
+                "or construct AudioLabVoiceSessionClient directly.");
+        }
+        return new AudioLabVoiceSessionClient(_options, _sessionManager, logger ?? _loggerFactory?.CreateLogger<AudioLabVoiceSessionClient>());
     }
 
     /// <summary>Shared streaming core for engine install endpoints.</summary>
