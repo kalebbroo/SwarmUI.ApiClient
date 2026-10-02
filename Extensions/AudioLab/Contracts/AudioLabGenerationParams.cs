@@ -5,6 +5,10 @@ namespace SwarmUI.ApiClient.Extensions.AudioLab.Contracts;
 
 /// <summary>Generation parameters registered by the AudioLab server extension.</summary>
 /// <remarks>
+/// <para><b>Coverage: 73 of the 172 parameters AudioLab registers server-side are modeled here</b> (a
+/// pre-existing gap, not introduced by moving these off <see cref="GenerationRequest"/>). Covered: every music
+/// provider's core knobs and the parameters shared across TTS/STT models. Not yet covered: per-provider TTS/STT
+/// voice and tuning parameters.</para>
 /// <para>Attached to a request via <see cref="GenerationRequestExtensionParams.AudioLab"/>
 /// (<c>request.Extensions.AudioLab</c>). Every property here still serializes under its own top-level wire name,
 /// flattened into the same generation payload as every core parameter -- this type exists to keep AudioLab's

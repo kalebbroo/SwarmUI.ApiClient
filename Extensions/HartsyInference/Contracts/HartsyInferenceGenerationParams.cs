@@ -8,6 +8,7 @@ namespace SwarmUI.ApiClient.Extensions.HartsyInference.Contracts;
 /// / reference-edit inputs, and a handful of parameters that read like general-purpose SwarmUI/ComfyUI features
 /// but are, per the server source, registered only by this extension.</summary>
 /// <remarks>
+/// <para><b>Coverage: 51 of the 53 parameters HartsyInference registers server-side are modeled here.</b></para>
 /// <para>Attached to a request via <see cref="SwarmUI.ApiClient.Extensions.GenerationRequestExtensionParams.HartsyInference"/>
 /// (<c>request.Extensions.HartsyInference</c>).</para>
 /// <para>These are distinct from the identically-shaped stock parameters elsewhere on

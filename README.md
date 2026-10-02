@@ -59,7 +59,7 @@ SwarmUI.ApiClient/
     ├── AudioLab/                  # AudioLab extension
     │   ├── IAudioLabEndpoint.cs
     │   ├── AudioLabEndpoint.cs
-    │   ├── AudioLabVoiceSessionClient.cs # duplex voice session; constructed directly, not an I*Endpoint method
+    │   ├── AudioLabVoiceSessionClient.cs # duplex voice session; build one via IAudioLabEndpoint.CreateVoiceSession
     │   └── Contracts/             # Contracts owned by this extension
     ├── LLMAssistant/              # LLM Assistant extension
     │   ├── ILLMAssistantEndpoint.cs
@@ -99,11 +99,30 @@ foreach (SwarmExtensionInfo info in client.Extensions.All)
 }
 ```
 
-Supported extensions: **AudioLab** (speech synthesis and transcription, audio engine and model
-management, format conversion, DAW projects, and a real-time voice agent session via
-`AudioLabVoiceSessionClient`), **LLM Assistant** (streaming chat threads, assistants, tools, LLM model
-management, per-user memory, and a stateless voice-turn endpoint for that same voice agent to answer
-through), and **MagicPrompt** (prompt enhancement).
+Supported extensions:
+
+- **AudioLab** -- speech synthesis and transcription, audio engine and model management, format
+  conversion, DAW projects, and a real-time voice agent session. Build one with
+  `client.Extensions.AudioLab.CreateVoiceSession(...)` -- note it does *not* inherit the session key
+  of a scoped client (eg one from `client.ForSession(...)`); pass that explicitly to the returned
+  client's own `ConnectAsync`. Constructing `AudioLabVoiceSessionClient` directly still works too, for
+  a caller without a full `ISwarmClient` to hand. Its generation parameters (music, TTS/STT) live on
+  `request.Extensions.AudioLab` (`AudioLabGenerationParams`).
+- **LLM Assistant** -- streaming chat threads, assistants, tools, LLM model management, per-user
+  memory, and a stateless voice-turn endpoint for that same voice agent to answer through. Its
+  prompt-processing generation parameters (`<llmprompt>` tag handling) live on
+  `request.Extensions.LLMAssistant` (`LLMAssistantGenerationParams`).
+- **API Backends** -- reports what a given API-backed model (BFL, OpenAI, Ideogram, Google, Grok, and
+  fal.ai-fronted providers) will actually accept. Its generation parameters live on
+  `request.Extensions.APIBackends` (`APIBackendsGenerationParams`).
+- **HartsyInference Backend** -- reports which composition features, samplers, and schedulers an
+  architecture or checkpoint supports. Its generation parameters live on
+  `request.Extensions.HartsyInference` (`HartsyInferenceGenerationParams`).
+- **MagicPrompt** -- prompt enhancement. Registers no generation parameters of its own.
+
+Upgrading from before 0.13.0-beta: extension-registered parameters moved off `GenerationRequest`
+itself onto these per-extension groups (a breaking change) -- see the "Breaking changes" section for
+0.13.0-beta in [`Docs/CHANGELOG.md`](./Docs/CHANGELOG.md) for the full before/after mapping.
 
 See [`Extensions/README.md`](./Extensions/README.md) for the supported extension registry and the
 steps for adding a new one.
@@ -116,9 +135,15 @@ This README gives a high level snapshot. For detailed release notes, see:
 
 Highlights for the current beta:
 
-- First beta of `SwarmUI.ApiClient`: typed wrapper around SwarmUI HTTP + WebSocket APIs.
+- **0.13.0-beta, breaking:** extension-registered `GenerationRequest` parameters (AudioLab,
+  API Backends, HartsyInference, LLM Assistant) moved off the core type onto per-extension groups
+  under `request.Extensions.<Extension>` -- see the "Breaking changes" section for 0.13.0-beta in
+  [`Docs/CHANGELOG.md`](./Docs/CHANGELOG.md) for the full migration map.
+- **0.13.0-beta:** `client.Extensions.AudioLab.CreateVoiceSession(...)` reaches AudioLab's real-time
+  voice agent session without hand-threading `SwarmClientOptions`/`ISessionManager` yourself.
 - Core infrastructure implemented: `SwarmClientOptions`, `SessionManager`, `SwarmHttpClient`, `SwarmWebSocketClient`, and the `SwarmClient` facade.
-- Endpoint coverage for generation, models, backends, presets, user, and admin operations.
+- Endpoint coverage for generation, models, backends, presets, user, and admin operations, plus the
+  server extensions listed above.
 - Unit tests in the `SwarmTests` project cover HTTP behavior, sessions, streaming generation, model management, presets, and client wiring.
 
 ## Upcoming Features

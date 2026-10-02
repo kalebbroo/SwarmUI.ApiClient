@@ -17,9 +17,9 @@ namespace SwarmUI.ApiClient.Tests.Contracts.Requests
     /// <c>GenerationRequestExtensionParams</c>) left the wire format unchanged.</summary>
     /// <remarks>Each scenario here is built with TODAY's composed shape (<c>request.Extensions.X.Foo</c>) and
     /// compared against a fixture captured from the PRE-refactor shape (<c>request.Foo</c> directly on the
-    /// merged partial class, at commit 07a8300 -- see <c>Tests/_FixtureCapture.cs</c> in that commit's history
-    /// for exactly how). A fixture mismatch here means the restructuring changed what reaches the server, not
-    /// just how the C# is organized.</remarks>
+    /// merged partial class, at commit 07a8300). See <see cref="SwarmUI.ApiClient.Tests._FixtureCapture"/> for
+    /// the capture tool and exactly how/when the fixtures were produced. A fixture mismatch here means the
+    /// restructuring changed what reaches the server, not just how the C# is organized.</remarks>
     public class GenerationRequestWireCompatibilityTests
     {
         private static string FixturesDir([CallerFilePath] string here = "")
