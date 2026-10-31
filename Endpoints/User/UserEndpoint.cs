@@ -64,9 +64,11 @@ public class UserEndpoint : IUserEndpoint
             throw new ArgumentException("Settings dictionary cannot be empty", nameof(settings));
         }
         _logger.LogDebug("Updating user settings with {Count} values", settings.Count);
+        // SwarmUI hands a JObject parameter the whole request body (APICallReflectBuilder), and ChangeUserSettings reads
+        // its map from "settings" there, so the map goes under that key at the top level.
         JObject payload = new()
         {
-            ["rawData"] = JObject.FromObject(settings)
+            ["settings"] = JObject.FromObject(settings)
         };
         await _httpClient.PostJsonAsync<JObject>("ChangeUserSettings", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
         _logger.LogInformation("User settings updated successfully");

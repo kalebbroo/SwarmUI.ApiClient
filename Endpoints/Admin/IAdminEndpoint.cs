@@ -56,10 +56,8 @@ public interface IAdminEndpoint
     /// <param name="settings">Map of setting identifiers to new values. These will be applied as if the user
     /// had changed their own settings, but without requiring their session.</param>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>
-    /// <remarks>Maps to SwarmUI's <c>/API/AdminChangeUserSettings</c> route.
-    /// The underlying API expects a <c>rawData</c> object whose <c>settings</c> property
-    /// contains the map of setting IDs to values; the endpoint implementation shapes this
-    /// request accordingly.</remarks>
+    /// <remarks>Maps to SwarmUI's <c>/API/AdminChangeUserSettings</c> route, sent as <c>{"name": ..., "settings": {...}}</c>.
+    /// The server's <c>rawData</c> parameter is the whole request body, not a field named <c>rawData</c>.</remarks>
     Task ChangeUserSettingsAsync(string name, Dictionary<string, object> settings, CancellationToken cancellationToken = default);
 
     /// <summary>Lists all known user IDs on the SwarmUI server.</summary>
@@ -146,8 +144,8 @@ public interface IAdminEndpoint
     /// <param name="settings">Map of setting identifiers to new values. Values must be compatible with the
     /// types and allowed ranges described by <see cref="ListServerSettingsAsync"/>.</param>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>
-    /// <remarks>Maps to SwarmUI's <c>/API/ChangeServerSettings</c> route.
-    /// The endpoint shapes this into the <c>rawData</c> payload expected by SwarmUI.</remarks>
+    /// <remarks>Maps to SwarmUI's <c>/API/ChangeServerSettings</c> route, sent as <c>{"settings": {...}}</c>.
+    /// The server's <c>rawData</c> parameter is the whole request body, not a field named <c>rawData</c>.</remarks>
     Task ChangeServerSettingsAsync(Dictionary<string, object> settings, CancellationToken cancellationToken = default);
 
     /// <summary>Checks for available updates to SwarmUI itself, installed extensions, and backends.</summary>

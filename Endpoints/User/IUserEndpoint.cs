@@ -33,7 +33,9 @@ public interface IUserEndpoint
     Task<UserSettingsResponse> GetUserSettingsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Updates user settings with new values; only the provided settings are changed.</summary>
-    /// <param name="settings">Dictionary of setting keys and new values to update.</param>
+    /// <param name="settings">Dictionary of setting keys and new values to update. Nested settings use dotted keys, such as
+    /// <c>fileformat.reformattransientimages</c>.</param>
+    /// <remarks>Maps to SwarmUI's <c>/API/ChangeUserSettings</c> route, sent as <c>{"settings": {...}}</c>.</remarks>
     /// <param name="cancellationToken">Cancellation token for the operation.</param>
     /// <returns>Task that completes when settings are updated.</returns>
     Task ChangeUserSettingsAsync(Dictionary<string, object> settings, CancellationToken cancellationToken = default);

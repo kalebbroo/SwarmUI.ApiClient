@@ -1,5 +1,20 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.13.3-beta
+
+Fixes the wire shape of the three settings writes, which SwarmUI could not read.
+
+### Fixed
+
+- **`User.ChangeUserSettingsAsync`, `Admin.ChangeUserSettingsAsync` and `Admin.ChangeServerSettingsAsync` sent their map
+  inside a `rawData` field.** SwarmUI hands a `JObject` parameter the whole request body
+  (`src/WebAPI/APICallReflectBuilder.cs`), and each route reads its map from `settings` in it, so the server found no
+  `settings` and threw a `NullReferenceException` (`BasicAPIFeatures.ChangeUserSettings`, observed on a live SwarmUI on
+  2026-10-31). The bodies are now `{"settings": {...}}`, and `{"name": ..., "settings": {...}}` for the admin route.
+  - **Migration:** pass the settings map itself, with dotted keys for nested settings
+    (`fileformat.reformattransientimages`). A caller that had wrapped its map in `{"settings": ...}` to work around the
+    old shape must drop that wrapper.
+
 ## 0.13.2-beta
 
 Lets a caller tell whether a failed stream could have started work on the server, and bounds the two waits that
