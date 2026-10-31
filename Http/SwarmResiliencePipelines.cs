@@ -57,7 +57,7 @@ internal static class SwarmResiliencePipelines
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
                 Delay = options.RetryBaseDelay,
-                ShouldHandle = args => ValueTask.FromResult(args.Outcome.Exception is WebSocketException)
+                ShouldHandle = args => ValueTask.FromResult(args.Outcome.Exception is WebSocketException or TimeoutException)
             })
             .Build();
     }

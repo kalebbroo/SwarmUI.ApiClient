@@ -93,7 +93,7 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
                         yield return frame;
                     }
                 }
-                frame = await ReceiveFrameAsync(connection, endpoint, buffer, () => consecutiveMalformed = 0, () => ++consecutiveMalformed, cancellationToken).ConfigureAwait(false);
+                frame = await ReceiveTaggedAsync(connection, endpoint, buffer, () => consecutiveMalformed = 0, () => ++consecutiveMalformed, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -114,15 +114,50 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
 
         /// <summary>False once the server has closed or the receive loop has ended.</summary>
         public bool Open { get; set; } = true;
+
+        /// <summary>How far the request has got: <see cref="SwarmSendPhase.Sent"/> once the server has answered any frame.</summary>
+        public SwarmSendPhase Phase { get; set; } = SwarmSendPhase.SendUnknown;
+    }
+
+    /// <summary>Receives one frame after the connection was handed off, stamping a failure with how far the request got.</summary>
+    private async Task<JObject?> ReceiveTaggedAsync(Connection connection, string endpoint, byte[] buffer, Action resetMalformed, Func<int> bumpMalformed, CancellationToken cancellationToken)
+    {
+        try
+        {
+            JObject? frame = await ReceiveFrameAsync(connection, endpoint, buffer, resetMalformed, bumpMalformed, cancellationToken).ConfigureAwait(false);
+            if (frame is not null)
+            {
+                connection.Phase = SwarmSendPhase.Sent;
+            }
+            return frame;
+        }
+        catch (SwarmException ex)
+        {
+            ex.SendPhase ??= connection.Phase;
+            throw;
+        }
     }
 
     /// <summary>Establishes a connection: connect (with transient retry), send the payload, read the first frame, and transparently refresh the session when the server rejects it — bounded by <see cref="SwarmClientOptions.SessionRefreshCap"/>.</summary>
+    /// <remarks>Every <see cref="SwarmException"/> it throws carries <see cref="SwarmException.SendPhase"/>: <see cref="SwarmSendPhase.NotInvoked"/>
+    /// until the payload goes to the socket (and for a session the server rejected, which it refuses before any work), then
+    /// <see cref="SwarmSendPhase.SendUnknown"/> until the server answers a frame.</remarks>
     private async Task<Connection> EstablishAsync(string endpoint, JObject request, string sessionKey, CancellationToken cancellationToken)
     {
         Uri wsUri = new($"{_baseWsUrl}/API/{endpoint}");
         for (int refreshCycle = 0; ; refreshCycle++)
         {
-            string sessionId = await _sessionManager.GetOrCreateSessionAsync(sessionKey, cancellationToken).ConfigureAwait(false);
+            string sessionId;
+            try
+            {
+                sessionId = await _sessionManager.GetOrCreateSessionAsync(sessionKey, cancellationToken).ConfigureAwait(false);
+            }
+            catch (SwarmException ex)
+            {
+                ex.SendPhase ??= SwarmSendPhase.NotInvoked;
+                throw;
+            }
+            SwarmSendPhase phase = SwarmSendPhase.NotInvoked;
             IClientWebSocket? socket = null;
             bool handedOff = false;
             try
@@ -133,6 +168,7 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
                 JObject payload = (JObject)request.DeepClone();
                 payload["session_id"] = sessionId;
                 byte[] requestBytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload));
+                phase = SwarmSendPhase.SendUnknown;
                 await socket.SendAsync(new ArraySegment<byte>(requestBytes), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
                 // The server responds to a bad session with exactly one error frame, then a normal close.
                 Connection connection = new() { Socket = socket };
@@ -153,7 +189,7 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
                     _sessionManager.InvalidateSession(sessionKey, sessionId);
                     if (refreshCycle + 1 >= _options.SessionRefreshCap)
                     {
-                        throw new SwarmSessionException($"Session for key '{sessionKey}' was rejected {refreshCycle + 1} times in a row; giving up. {firstFrame["error"]}");
+                        throw new SwarmSessionException($"Session for key '{sessionKey}' was rejected {refreshCycle + 1} times in a row; giving up. {firstFrame["error"]}") { SendPhase = SwarmSendPhase.NotInvoked };
                     }
                     continue;
                 }
@@ -163,6 +199,7 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
                     _logger.LogDebug("Server closed the WebSocket for {Endpoint} without sending any frame", endpoint);
                 }
                 connection.FirstFrame = firstFrame;
+                connection.Phase = firstFrame is null ? SwarmSendPhase.SendUnknown : SwarmSendPhase.Sent;
                 handedOff = true;
                 return connection;
             }
@@ -170,14 +207,15 @@ public class SwarmWebSocketClient : ISwarmWebSocketClient
             {
                 throw;
             }
-            catch (SwarmException)
+            catch (SwarmException ex)
             {
+                ex.SendPhase ??= phase;
                 throw;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to establish WebSocket connection to {Endpoint}", endpoint);
-                throw new SwarmWebSocketException($"Failed to connect to WebSocket endpoint {endpoint}", socket?.State, ex);
+                throw new SwarmWebSocketException($"Failed to connect to WebSocket endpoint {endpoint}", socket?.State, ex) { SendPhase = phase };
             }
             finally
             {

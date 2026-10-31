@@ -1,5 +1,40 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.13.2-beta
+
+Lets a caller tell whether a failed stream could have started work on the server, and bounds the two waits that
+had no limit of their own. Additive and non-breaking: both new timeouts are off unless set, and no existing
+property, wire name or default changes.
+
+### Added
+
+- **`SwarmException.SendPhase`** (`SwarmSendPhase`: `NotInvoked`, `SendUnknown`, `Sent`), set on every
+  `SwarmException` that `StreamFramesAsync` throws, and so on every stream built on it (`StreamGenerationAsync`
+  among them), and to `NotInvoked` on every session-creation failure. `NotInvoked` means the server cannot have
+  started the work: session creation or the connect failed before any payload reached the socket, or the server
+  answered `invalid_session_id` on every attempt (SwarmUI checks the session before it looks up the route, so such a
+  payload ran nothing). `SendUnknown` means the payload was being sent, or was sent with no answer yet. `Sent` means
+  the server answered at least one frame. Only `NotInvoked` is safe to replay on another server. A caller's
+  cancellation and a stream closed without an error (reported as `stream_ended_early`) carry no phase and mean "may
+  have started". The AudioLab voice session client does not set a phase. This is the client's own record of what it
+  did on the socket; it adds nothing to the SwarmUI API surface.
+- **`SwarmClientOptions.SessionCreateTimeout`** (default null, no limit). Bounds one `GetNewSession` call. The
+  creation is shared by every caller of the same session key, so one caller's cancellation still never ends it for
+  the others; this limit ends it for all of them, as a `SwarmSessionException` wrapping a `TimeoutException`.
+- **`SwarmClientOptions.WebSocketConnectTimeout`** (default null, no limit). Bounds each WebSocket connect attempt;
+  a timed-out attempt fails with a `TimeoutException` (wrapped in `SwarmWebSocketException` by the stream) and is
+  retried like a `WebSocketException` when `MaxRetryAttempts` allows.
+
+### Changed
+
+- **Disposing `SessionManager` ends a `GetNewSession` call in flight.** Its waiters get a `SwarmSessionException`
+  saying the manager was disposed, instead of the creation running on after the manager is gone. `Dispose` is now
+  safe to call more than once, from any thread.
+
+### Notes
+
+- With both timeouts unset and `SendPhase` ignored, behaviour is identical to 0.13.1-beta.
+
 ## 0.13.1-beta
 
 Completes the AudioLab and HartsyInference parameter coverage 0.13.0-beta's move disclosed as a pre-existing
