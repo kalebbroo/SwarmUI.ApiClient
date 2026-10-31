@@ -23,9 +23,14 @@ public sealed class FakeSessionManager : ISessionManager
     public int InvalidateCallCount;
     public readonly List<(string Key, string? Observed)> Invalidations = [];
     public Func<string, string>? SessionFactory;
+    public Exception? CreateThrows;
 
     public Task<string> GetOrCreateSessionAsync(string sessionKey = SwarmSessionKeys.Default, CancellationToken cancellationToken = default)
     {
+        if (CreateThrows is not null)
+        {
+            return Task.FromException<string>(CreateThrows);
+        }
         string session = _sessions.GetOrAdd(sessionKey, key =>
         {
             Interlocked.Increment(ref CreateCount);

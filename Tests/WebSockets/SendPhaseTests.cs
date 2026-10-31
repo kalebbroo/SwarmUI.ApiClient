@@ -23,9 +23,9 @@ public class SendPhaseTests
         WebSocketConnectTimeout = connectTimeout
     };
 
-    private static async Task<SwarmException> FailureOf(FakeClientWebSocket[] sockets, SwarmClientOptions? options = null, Action<JObject>? onFrame = null)
+    private static async Task<SwarmException> FailureOf(FakeClientWebSocket[] sockets, SwarmClientOptions? options = null, Action<JObject>? onFrame = null, FakeSessionManager? sessions = null)
     {
-        SwarmWebSocketClient client = new(options ?? Options(), new FakeSessionManager(), new FakeClientWebSocketFactory(sockets));
+        SwarmWebSocketClient client = new(options ?? Options(), sessions ?? new FakeSessionManager(), new FakeClientWebSocketFactory(sockets));
         return await Assert.ThrowsAnyAsync<SwarmException>(async () =>
         {
             await foreach (JObject frame in client.StreamFramesAsync("GenerateText2ImageWS", new JObject { ["prompt"] = "cat" }))
@@ -74,8 +74,7 @@ public class SendPhaseTests
     [Fact]
     public async Task ASessionTheServerKeepsRejectingIsNotInvoked()
     {
-        FakeClientWebSocket Rejecting() => new([new FakeClientWebSocket.TextFrame("""{"error_id":"invalid_session_id","error":"bad session"}""")]);
-        SwarmException failure = await FailureOf([Rejecting(), Rejecting()]);
+        SwarmException failure = await FailureOf([Rejected(), Rejected()]);
         Assert.IsType<SwarmSessionException>(failure);
         Assert.Equal(SwarmSendPhase.NotInvoked, failure.SendPhase);
     }
@@ -113,6 +112,47 @@ public class SendPhaseTests
         SwarmClientOptions options = Options(TimeSpan.FromMilliseconds(50));
         options.MaxRetryAttempts = 1;
         SwarmWebSocketClient client = new(options, new FakeSessionManager(), new FakeClientWebSocketFactory(hung, answering));
+        List<JObject> frames = [];
+        await foreach (JObject frame in client.StreamFramesAsync("GenerateText2ImageWS", []))
+        {
+            frames.Add(frame);
+        }
+        Assert.Single(frames);
+        Assert.True(hung.Disposed);
+    }
+
+    [Fact]
+    public async Task ASessionThatCannotBeCreatedIsNotInvoked()
+    {
+        FakeSessionManager sessions = new() { CreateThrows = new SwarmSessionException("server down") };
+        SwarmException failure = await FailureOf([], sessions: sessions);
+        Assert.Equal(SwarmSendPhase.NotInvoked, failure.SendPhase);
+    }
+
+    private static FakeClientWebSocket Rejected() => new([new FakeClientWebSocket.TextFrame("""{"error_id":"invalid_session_id","error":"bad session"}""")]);
+
+    [Fact]
+    public async Task AConnectFailureAfterARejectedSessionIsStillNotInvoked()
+    {
+        FakeClientWebSocket refused = new([]) { ConnectException = new WebSocketException("refused") };
+        Assert.Equal(SwarmSendPhase.NotInvoked, (await FailureOf([Rejected(), refused])).SendPhase);
+    }
+
+    [Fact]
+    public async Task ASendFailureAfterARejectedSessionIsUnknown()
+    {
+        FakeClientWebSocket reset = new([]) { SendException = new WebSocketException("reset") };
+        Assert.Equal(SwarmSendPhase.SendUnknown, (await FailureOf([Rejected(), reset])).SendPhase);
+    }
+
+    [Fact]
+    public async Task AStreamClosedWithoutAnErrorThrowsNothing()
+    {
+        FakeClientWebSocket socket = new([
+            new FakeClientWebSocket.TextFrame("""{"status":{}}"""),
+            new FakeClientWebSocket.ThrowStep(new WebSocketException(WebSocketError.ConnectionClosedPrematurely))
+        ]);
+        SwarmWebSocketClient client = new(Options(), new FakeSessionManager(), new FakeClientWebSocketFactory(socket));
         List<JObject> frames = [];
         await foreach (JObject frame in client.StreamFramesAsync("GenerateText2ImageWS", []))
         {

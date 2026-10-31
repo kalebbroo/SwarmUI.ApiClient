@@ -219,4 +219,24 @@ public class SessionManagerTests
         manager.Dispose();
         await Assert.ThrowsAsync<SwarmSessionException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(5)));
     }
+
+    [Fact]
+    public async Task EverySessionFailureIsNotInvoked()
+    {
+        CountingHttpClient http = new() { Fail = true };
+        using SessionManager manager = Create(http);
+        SwarmSessionException failure = await Assert.ThrowsAsync<SwarmSessionException>(() => manager.GetOrCreateSessionAsync("k"));
+        Assert.Equal(SwarmSendPhase.NotInvoked, failure.SendPhase);
+    }
+
+    [Fact]
+    public async Task DisposingFromManyThreadsAtOnceNeverThrows()
+    {
+        CountingHttpClient http = new() { Latency = TimeSpan.FromMinutes(5) };
+        SessionManager manager = new(() => http, new SwarmClientOptions());
+        Task<string> waiting = manager.GetOrCreateSessionAsync("k");
+        await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Run(manager.Dispose)));
+        SwarmSessionException failure = await Assert.ThrowsAsync<SwarmSessionException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Contains("disposed", failure.Message);
+    }
 }

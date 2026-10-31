@@ -10,12 +10,14 @@ property, wire name or default changes.
 
 - **`SwarmException.SendPhase`** (`SwarmSendPhase`: `NotInvoked`, `SendUnknown`, `Sent`), set on every
   `SwarmException` that `StreamFramesAsync` throws, and so on every stream built on it (`StreamGenerationAsync`
-  among them). `NotInvoked` means the request payload never reached the socket: session creation failed, the
-  connect failed, or the server rejected the session past `SessionRefreshCap`. `SendUnknown` means the payload was
-  being sent or was sent with no answer yet. `Sent` means the server answered at least one frame. Only `NotInvoked`
-  proves the server never received the request, which is what a caller needs before replaying it on another server.
-  Null for failures outside a stream, such as HTTP calls. This is the client's own record of what it did on the
-  socket; it adds nothing to the SwarmUI API surface.
+  among them), and to `NotInvoked` on every session-creation failure. `NotInvoked` means the server cannot have
+  started the work: session creation or the connect failed before any payload reached the socket, or the server
+  answered `invalid_session_id` on every attempt (SwarmUI checks the session before it looks up the route, so such a
+  payload ran nothing). `SendUnknown` means the payload was being sent, or was sent with no answer yet. `Sent` means
+  the server answered at least one frame. Only `NotInvoked` is safe to replay on another server. A caller's
+  cancellation and a stream closed without an error (reported as `stream_ended_early`) carry no phase and mean "may
+  have started". The AudioLab voice session client does not set a phase. This is the client's own record of what it
+  did on the socket; it adds nothing to the SwarmUI API surface.
 - **`SwarmClientOptions.SessionCreateTimeout`** (default null, no limit). Bounds one `GetNewSession` call. The
   creation is shared by every caller of the same session key, so one caller's cancellation still never ends it for
   the others; this limit ends it for all of them, as a `SwarmSessionException` wrapping a `TimeoutException`.
@@ -26,7 +28,8 @@ property, wire name or default changes.
 ### Changed
 
 - **Disposing `SessionManager` ends a `GetNewSession` call in flight.** Its waiters get a `SwarmSessionException`
-  instead of the creation running on after the manager is gone. `Dispose` is now idempotent.
+  saying the manager was disposed, instead of the creation running on after the manager is gone. `Dispose` is now
+  safe to call more than once, from any thread.
 
 ### Notes
 
