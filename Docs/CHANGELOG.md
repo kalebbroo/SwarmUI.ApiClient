@@ -14,10 +14,8 @@ property, wire name or default changes.
   connect failed, or the server rejected the session past `SessionRefreshCap`. `SendUnknown` means the payload was
   being sent or was sent with no answer yet. `Sent` means the server answered at least one frame. Only `NotInvoked`
   proves the server never received the request, which is what a caller needs before replaying it on another server.
-  Null for failures outside a stream, such as HTTP calls.
-- **`ErrorInfo.NotStarted`**, read from an optional `not_started` boolean on a generation error frame: the server's
-  own statement that it refused before starting any work. No SwarmUI release sends it yet, so it is null today; treat
-  null as "may have started". Omitted from `ErrorInfo`'s own JSON when null.
+  Null for failures outside a stream, such as HTTP calls. This is the client's own record of what it did on the
+  socket; it adds nothing to the SwarmUI API surface.
 - **`SwarmClientOptions.SessionCreateTimeout`** (default null, no limit). Bounds one `GetNewSession` call. The
   creation is shared by every caller of the same session key, so one caller's cancellation still never ends it for
   the others; this limit ends it for all of them, as a `SwarmSessionException` wrapping a `TimeoutException`.

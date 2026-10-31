@@ -269,15 +269,6 @@ public class GenerationEndpointTests
     }
 
     [Fact]
-    public async Task Stream_ErrorFrame_CarriesTheServersNotStartedStatement()
-    {
-        List<GenerationUpdate> refused = await RunStreamAsync([JObject.Parse("""{"error":"model not found","error_id":"model_missing","not_started":true}""")]);
-        Assert.True(refused.Find(u => u.Type == "error")!.Error!.NotStarted);
-        List<GenerationUpdate> silent = await RunStreamAsync([JObject.Parse("""{"error":"out of memory"}""")]);
-        Assert.Null(silent.Find(u => u.Type == "error")!.Error!.NotStarted);
-    }
-
-    [Fact]
     public async Task Stream_CombinedKeysInOneFrame_EmitBothUpdates()
     {
         List<GenerationUpdate> updates = await RunStreamAsync(

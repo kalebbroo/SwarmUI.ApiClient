@@ -195,8 +195,7 @@ public class GenerationEndpoint : IGenerationEndpoint
                 Error = new ErrorInfo
                 {
                     Message = frame["error"]!.Type == JTokenType.String ? frame["error"]!.ToString() : frame["error"]!.ToString(Formatting.None),
-                    ErrorId = frame["error_id"]?.ToString(),
-                    NotStarted = frame["not_started"] is { Type: JTokenType.Boolean } notStarted ? notStarted.Value<bool>() : null
+                    ErrorId = frame["error_id"]?.ToString()
                 }
             };
         }

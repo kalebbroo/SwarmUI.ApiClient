@@ -79,12 +79,6 @@ public class ErrorInfo
     /// <summary>Machine-readable error id when the server provided one (e.g. "invalid_session_id"), or <see cref="StreamEndedEarlyErrorId"/> for a dropped stream; null for plain generation errors.</summary>
     [JsonProperty("error_id")]
     public string? ErrorId { get; set; }
-
-    /// <summary>The server's own statement that it refused the request before starting any work, from an optional
-    /// <c>not_started</c> field on the error frame. Null when the server did not say, which is every SwarmUI release that
-    /// predates the field; treat null as "may have started".</summary>
-    [JsonProperty("not_started", NullValueHandling = NullValueHandling.Ignore)]
-    public bool? NotStarted { get; set; }
 }
 
 /// <summary>Provides session-scoped status including queue, model loading, and active generations.</summary>
