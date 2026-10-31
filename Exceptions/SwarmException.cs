@@ -39,6 +39,10 @@ public class SwarmException : Exception
     /// Common values: "invalid_session_id", "authentication_failed", etc.</summary>
     public string? ErrorId { get; }
 
+    /// <summary>How far a WebSocket request got before this failure, or null for a failure outside a stream (an HTTP call, for example).</summary>
+    /// <remarks>Only <see cref="SwarmSendPhase.NotInvoked"/> proves the server never received the request.</remarks>
+    public SwarmSendPhase? SendPhase { get; internal set; }
+
     /// <summary>Initializes a new instance of the SwarmException class.</summary>
     /// <param name="message">The error message.</param>
     public SwarmException(string message) : base(message)

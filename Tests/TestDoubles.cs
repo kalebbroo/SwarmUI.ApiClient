@@ -128,6 +128,8 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
     public bool Disposed;
     public bool CloseOutputCalled;
     public Exception? ConnectException;
+    public bool ConnectHangs;
+    public Exception? SendException;
 
     public FakeClientWebSocket(IEnumerable<Step> steps)
     {
@@ -146,19 +148,27 @@ internal sealed class FakeClientWebSocket : IClientWebSocket
     {
     }
 
-    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
+    public async Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
     {
+        if (ConnectHangs)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
         if (ConnectException is not null)
         {
             State = WebSocketState.Closed;
             throw ConnectException;
         }
         State = WebSocketState.Open;
-        return Task.CompletedTask;
     }
 
     public Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
+        if (SendException is not null)
+        {
+            State = WebSocketState.Aborted;
+            throw SendException;
+        }
         if (messageType == WebSocketMessageType.Binary)
         {
             SentBinaryMessages.Add(buffer.ToArray());

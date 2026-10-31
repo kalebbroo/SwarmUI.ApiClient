@@ -57,6 +57,15 @@ public class SwarmClientOptions
     /// <remarks>Prevents a GetNewSession storm from thousands of concurrent callers while the server is down.</remarks>
     public TimeSpan SessionCreateFailureBackoff { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>Longest one GetNewSession call may take before it fails. Null (default) means no limit beyond <see cref="HttpTimeout"/> and the retry pipeline.</summary>
+    /// <remarks>The creation is shared by every caller waiting on the same session key, so one caller's cancellation never ends
+    /// it; this bounds it for all of them instead. Disposing the session manager also ends a creation in flight.</remarks>
+    public TimeSpan? SessionCreateTimeout { get; set; }
+
+    /// <summary>Longest one WebSocket connect attempt may take before it fails with a <see cref="TimeoutException"/>. Null (default) means no limit beyond the caller's cancellation token.</summary>
+    /// <remarks>Applies per attempt; a timed-out attempt is retried like any other transient connect failure when <see cref="MaxRetryAttempts"/> allows.</remarks>
+    public TimeSpan? WebSocketConnectTimeout { get; set; }
+
     /// <summary>When set, session slots that have not been used for this duration are eligible for client-side eviction. Null (default) means never evict.</summary>
     /// <remarks>Session slots are tiny (~100 bytes); eviction only matters for deployments keying sessions by very large user populations. SwarmUI expires sessions server-side after ~31 days regardless.</remarks>
     public TimeSpan? SessionIdleEviction { get; set; }

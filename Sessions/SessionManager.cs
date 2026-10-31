@@ -43,6 +43,7 @@ public class SessionManager : ISessionManager, IDisposable
     private readonly SwarmClientOptions _options;
     private readonly ILogger<SessionManager> _logger;
     private ISwarmHttpClient? _httpClientCache;
+    private readonly CancellationTokenSource _shutdown = new();
     private long _lastEvictionSweepTicks;
     private volatile bool _disposed;
 
@@ -175,11 +176,18 @@ public class SessionManager : ISessionManager, IDisposable
     }
 
     /// <summary>Calls GetNewSession and converts the response to a <see cref="SwarmSessionInfo"/>. Failures stamp the slot for backoff.</summary>
+    /// <remarks>Runs on the manager's own token, never a caller's, because every caller of the key shares it: bounded by
+    /// <see cref="SwarmClientOptions.SessionCreateTimeout"/> when set, and ended by <see cref="Dispose"/>.</remarks>
     private async Task<SwarmSessionInfo> CreateNewSessionAsync(string sessionKey, SessionSlot slot)
     {
+        using CancellationTokenSource budget = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        if (_options.SessionCreateTimeout is TimeSpan limit)
+        {
+            budget.CancelAfter(limit);
+        }
         try
         {
-            JObject response = await HttpClient.PostJsonAsync<JObject>("GetNewSession", payload: null, sessionKey: sessionKey, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+            JObject response = await HttpClient.PostJsonAsync<JObject>("GetNewSession", payload: null, sessionKey: sessionKey, cancellationToken: budget.Token).ConfigureAwait(false);
             string? sessionId = response["session_id"]?.ToString();
             if (string.IsNullOrWhiteSpace(sessionId))
             {
@@ -201,6 +209,11 @@ public class SessionManager : ISessionManager, IDisposable
             if (ex is SwarmSessionException)
             {
                 throw;
+            }
+            if (ex is OperationCanceledException && budget.IsCancellationRequested && !_shutdown.IsCancellationRequested)
+            {
+                _logger.LogError("GetNewSession for key '{Key}' did not answer within {Limit}", sessionKey, _options.SessionCreateTimeout);
+                throw new SwarmSessionException($"SwarmUI did not create a session within {_options.SessionCreateTimeout}.", new TimeoutException($"GetNewSession exceeded {_options.SessionCreateTimeout}", ex));
             }
             _logger.LogError(ex, "Failed to create session for key '{Key}'", sessionKey);
             throw new SwarmSessionException("Failed to obtain session from SwarmUI. Verify the server is running and accessible.", ex);
@@ -229,10 +242,16 @@ public class SessionManager : ISessionManager, IDisposable
         }
     }
 
-    /// <summary>Marks the manager disposed. Session slots hold no unmanaged resources; server-side sessions expire on their own.</summary>
+    /// <summary>Marks the manager disposed and ends any session creation in flight. Server-side sessions expire on their own.</summary>
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
         _disposed = true;
+        _shutdown.Cancel();
+        _shutdown.Dispose();
         _slots.Clear();
         GC.SuppressFinalize(this);
     }

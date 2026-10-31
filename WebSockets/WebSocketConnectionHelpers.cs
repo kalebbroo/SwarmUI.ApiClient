@@ -39,7 +39,8 @@ internal static class WebSocketConnectionHelpers
     }
 
     /// <summary>Creates a socket from <paramref name="socketFactory"/>, applies keep-alive and auth, and connects
-    /// to <paramref name="uri"/>, retrying transient failures per <paramref name="pipeline"/>. A fresh socket is
+    /// to <paramref name="uri"/>, retrying transient failures per <paramref name="pipeline"/>. Each attempt is bounded by
+    /// <see cref="SwarmClientOptions.WebSocketConnectTimeout"/> when set, and fails with a <see cref="TimeoutException"/>. A fresh socket is
     /// created for each attempt -- a <see cref="IClientWebSocket"/> can only be connected once -- and disposed if
     /// that particular attempt fails before returning.</summary>
     public static async Task<IClientWebSocket> ConnectWithRetryAsync(
@@ -49,12 +50,22 @@ internal static class WebSocketConnectionHelpers
             static async (state, ct) =>
             {
                 IClientWebSocket attempt = state.socketFactory.Create();
+                using CancellationTokenSource budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                if (state.options.WebSocketConnectTimeout is TimeSpan limit)
+                {
+                    budget.CancelAfter(limit);
+                }
                 try
                 {
                     attempt.SetKeepAliveInterval(state.options.KeepAliveInterval);
                     ApplyAuth(attempt, state.options);
-                    await attempt.ConnectAsync(state.uri, ct).ConfigureAwait(false);
+                    await attempt.ConnectAsync(state.uri, budget.Token).ConfigureAwait(false);
                     return attempt;
+                }
+                catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
+                {
+                    attempt.Dispose();
+                    throw new TimeoutException($"WebSocket connect to {state.uri} exceeded {state.options.WebSocketConnectTimeout}", ex);
                 }
                 catch
                 {

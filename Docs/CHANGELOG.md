@@ -1,5 +1,39 @@
 # SwarmUI.ApiClient Changelog
 
+## 0.13.2-beta
+
+Lets a caller tell whether a failed stream could have started work on the server, and bounds the two waits that
+had no limit of their own. Additive and non-breaking: both new timeouts are off unless set, and no existing
+property, wire name or default changes.
+
+### Added
+
+- **`SwarmException.SendPhase`** (`SwarmSendPhase`: `NotInvoked`, `SendUnknown`, `Sent`), set on every
+  `SwarmException` that `StreamFramesAsync` throws, and so on every stream built on it (`StreamGenerationAsync`
+  among them). `NotInvoked` means the request payload never reached the socket: session creation failed, the
+  connect failed, or the server rejected the session past `SessionRefreshCap`. `SendUnknown` means the payload was
+  being sent or was sent with no answer yet. `Sent` means the server answered at least one frame. Only `NotInvoked`
+  proves the server never received the request, which is what a caller needs before replaying it on another server.
+  Null for failures outside a stream, such as HTTP calls.
+- **`ErrorInfo.NotStarted`**, read from an optional `not_started` boolean on a generation error frame: the server's
+  own statement that it refused before starting any work. No SwarmUI release sends it yet, so it is null today; treat
+  null as "may have started". Omitted from `ErrorInfo`'s own JSON when null.
+- **`SwarmClientOptions.SessionCreateTimeout`** (default null, no limit). Bounds one `GetNewSession` call. The
+  creation is shared by every caller of the same session key, so one caller's cancellation still never ends it for
+  the others; this limit ends it for all of them, as a `SwarmSessionException` wrapping a `TimeoutException`.
+- **`SwarmClientOptions.WebSocketConnectTimeout`** (default null, no limit). Bounds each WebSocket connect attempt;
+  a timed-out attempt fails with a `TimeoutException` (wrapped in `SwarmWebSocketException` by the stream) and is
+  retried like a `WebSocketException` when `MaxRetryAttempts` allows.
+
+### Changed
+
+- **Disposing `SessionManager` ends a `GetNewSession` call in flight.** Its waiters get a `SwarmSessionException`
+  instead of the creation running on after the manager is gone. `Dispose` is now idempotent.
+
+### Notes
+
+- With both timeouts unset and `SendPhase` ignored, behaviour is identical to 0.13.1-beta.
+
 ## 0.13.1-beta
 
 Completes the AudioLab and HartsyInference parameter coverage 0.13.0-beta's move disclosed as a pre-existing
