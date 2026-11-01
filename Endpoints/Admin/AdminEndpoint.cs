@@ -111,15 +111,11 @@ public class AdminEndpoint : IAdminEndpoint
         }
         ArgumentNullException.ThrowIfNull(settings);
         _logger.LogDebug("Admin changing settings for user '{UserName}' with {SettingCount} entries", name, settings.Count);
-        JObject settingsObject = JObject.FromObject(settings);
-        JObject rawData = new()
-        {
-            ["settings"] = settingsObject
-        };
+        // SwarmUI hands a JObject parameter the whole request body, so "settings" sits beside "name" at the top level.
         JObject payload = new()
         {
             ["name"] = name,
-            ["rawData"] = rawData
+            ["settings"] = JObject.FromObject(settings)
         };
         JObject _ = await _httpClient.PostJsonAsync<JObject>("AdminChangeUserSettings", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
@@ -238,10 +234,10 @@ public class AdminEndpoint : IAdminEndpoint
     {
         ArgumentNullException.ThrowIfNull(settings);
         _logger.LogDebug("Admin changing server settings with {SettingCount} entries", settings.Count);
-        JObject rawData = JObject.FromObject(settings);
+        // SwarmUI hands a JObject parameter the whole request body, and ChangeServerSettings reads its map from "settings".
         JObject payload = new()
         {
-            ["rawData"] = rawData
+            ["settings"] = JObject.FromObject(settings)
         };
         JObject _ = await _httpClient.PostJsonAsync<JObject>("ChangeServerSettings", payload, _sessionKey, cancellationToken).ConfigureAwait(false);
     }
